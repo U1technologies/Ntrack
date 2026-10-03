@@ -15,7 +15,9 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 export const csrfProtection =
   ({ config }: AppDeps): RequestHandler =>
   (req, _res, next) => {
-    if (SAFE_METHODS.has(req.method)) return next();
+    // API key requests carry no cookies, and browsers cannot add the Authorization header
+    // cross-site without a CORS grant (none is given), so CSRF does not apply to them.
+    if (SAFE_METHODS.has(req.method) || req.auth?.apiKey) return next();
     const origin = req.get('origin');
     if (origin && origin !== config.CONSOLE_ORIGIN) throw new AppError(403, 'Cross-origin request rejected', 'csrf');
     const cookie = req.cookies?.[CSRF_COOKIE];

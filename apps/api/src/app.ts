@@ -2,6 +2,7 @@ import cookieParser from 'cookie-parser';
 import express, { type Express } from 'express';
 import helmet from 'helmet';
 import { pinoHttp } from 'pino-http';
+import { apiKeyAuth } from './middleware/api-key';
 import { loadSession } from './middleware/auth';
 import { csrfProtection } from './middleware/csrf';
 import { errorHandler, notFoundHandler } from './middleware/error-handler';
@@ -29,7 +30,7 @@ export const createApp = (deps: AppDeps): Express => {
 
   // The console is served from the same site through a rewrite, so no CORS is enabled: other
   // origins cannot call the API with credentials.
-  app.use('/v1', apiRateLimit(deps), csrfProtection(deps), loadSession(deps), createV1Router(deps));
+  app.use('/v1', apiRateLimit(deps), apiKeyAuth(deps, deps.apiRequestLog), csrfProtection(deps), loadSession(deps), createV1Router(deps));
 
   app.use(notFoundHandler);
   app.use(errorHandler(deps.logger));

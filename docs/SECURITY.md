@@ -17,6 +17,13 @@
 - SQL injection: Prisma parameterised queries; ClickHouse queries use whitelisted columns and bound parameters only.
 - Rate limits: 600 req/min per IP on the API, 10/15 min on login and MFA, 20/min on network tools; Redis-backed for multiple replicas.
 
+## API keys
+
+- `ntk_live_` prefix (easy to detect if leaked), 256-bit secret shown once, stored as SHA-256 only.
+- Effective permissions are the intersection of the key's permissions and its creator's current permissions, inside the creator's data scope; account, role, settings, integration and privacy management are never available to keys, and those API areas are blocked outright.
+- Per-key per-minute limit, per-organization daily allowance, optional IP allowlist, optional expiry (default one year in the console), revoke and rotate. Every key request, including refused ones, is logged (method, path with IDs removed, status, latency, truncated IP) for 90 days.
+- Key requests skip CSRF checks because they carry no cookies and browsers cannot send the Authorization header cross-site without a CORS grant, which the API never gives.
+
 ## Invitations and password reset
 
 - Invitation (7 days) and reset (30 minutes) tokens are 256-bit random, stored as SHA-256 only, single use (claimed atomically), and sent to the API in request bodies, not URLs.
@@ -61,5 +68,5 @@
 - PostgreSQL row-level security as a second isolation layer (isolation is currently enforced in the service layer and tested).
 - Email delivery needs a provider (SMTP). Invitations and password reset are built; until SMTP is configured, admins share invitation links manually and self-service reset emails are not delivered.
 - Spreadsheet exports neutralize formula-like cells (`= + - @`). `exceljs` pulls in a `uuid` version with a moderate advisory that does not affect how exceljs uses it; Prisma CLI tooling carries high-severity advisories in `deepmerge-ts` (build-time only). Re-check `npm audit` before launch.
-- API keys / OAuth for partner integrations (Phase 4).
+- OAuth for third-party apps (API keys are available).
 - Penetration test before commercial launch.

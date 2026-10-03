@@ -71,7 +71,7 @@ Phase 3 gaps: PDF export (CSV and Excel are available), automatic FX rates (rate
 |---|---|
 | Email invitations (accept flow, resend, revoke, copyable link while email is off) and self-service password reset | Built |
 | Data export and deletion requests (four-eyes erasure, self-service export and deletion request, invoice billing snapshot) | Built |
-| Public API keys with permissions, usage limits and API logs | Planned |
+| Public API keys with permissions, per-key and daily limits, IP allowlist, rotation and a 90-day request log (also for publishers and advertisers, limited to their own data) | Built |
 | PostgreSQL row-level security | Planned |
 
 ## Phase 4: SaaS

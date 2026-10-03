@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { createAdvertisersRouter } from './modules/advertisers/advertisers.routes';
+import { createApiKeysRouter } from './modules/api-keys/api-keys.routes';
 import { createAnalyticsRouter } from './modules/analytics/analytics.routes';
 import { createAuditRouter } from './modules/audit/audit.routes';
 import { createAuthRouter } from './modules/auth/auth.routes';
@@ -45,6 +46,7 @@ export const createV1Router = (deps: AppDeps) => {
   router.use('/travel', createTravelRouter(deps));
   router.use('/notifications', createNotificationsRouter(deps));
   router.use('/privacy', createPrivacyRouter(deps));
+  router.use('/api-keys', createApiKeysRouter(deps));
   router.use('/analytics', createAnalyticsRouter(deps));
   router.use('/scheduled-reports', createScheduledReportsRouter(deps));
   router.use('/tools', createToolsRouter(deps));

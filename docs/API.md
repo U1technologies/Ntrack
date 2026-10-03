@@ -29,6 +29,28 @@ curl -c jar -b jar -H "X-CSRF-Token: <token>" -H "Content-Type: application/json
   -d '{"email":"you@nextagmedia.com","password":"…"}' https://nextagmedia.com/ntrack/api/auth/login
 ```
 
+## API keys (integrations)
+
+Send `Authorization: Bearer ntk_live_…` on any `/v1` request. No cookies or CSRF token are needed.
+
+```bash
+curl -H "Authorization: Bearer $NTRACK_API_KEY" https://nextagmedia.com/ntrack/api/campaigns
+```
+
+- A key acts as the person who created it, with only the permissions chosen for the key and never more than that person's current permissions and data scope. It stops working when that person loses access.
+- Keys can never reach `/auth`, `/users`, `/roles`, `/organizations`, `/api-keys`, `/privacy` or `/notifications` (403 `api_key_forbidden`), and can never hold user, role, settings, integration or privacy management permissions, or `audit.view`.
+- Limits: per key per minute (`requestsPerMinute`, default 120; `X-RateLimit-*` headers, 429 `rate_limited`) and per organization per day (`apiDailyRequestLimit`, default 100,000; 429 `quota_exceeded`). Optional IP allowlist (IPs or CIDR ranges).
+- Errors: 401 `invalid_api_key` (unknown, revoked, expired, or the creator lost access), 403 `ip_not_allowed`.
+
+| Method | Path | Permission |
+|---|---|---|
+| GET | `/api-keys` | integrations.view (organization-wide managers see all keys; partners see their own) |
+| GET | `/api-keys/grantable-permissions` | integrations.manage |
+| POST | `/api-keys` | integrations.manage — `{ name, permissions[], expiresInDays?, allowedIps[], requestsPerMinute }` → `{ key, secret }` (secret shown once) |
+| POST | `/api-keys/:id/revoke` \| `/rotate` | integrations.manage (rotate: creator only; the old secret stops at once) |
+| GET | `/api-keys/logs?keyId=&status=success\|client_error\|server_error` | Request log, 90 days |
+| GET | `/api-keys/usage` | Requests per day (30 days) and today's use of the daily allowance |
+
 ## Account recovery and invitations (public, rate limited)
 
 | Method | Path | Notes |

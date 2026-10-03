@@ -9,6 +9,7 @@ import { EMAIL_QUEUE, POSTBACK_QUEUE, type EmailJob } from '@ntrack/shared';
 import type { ApiConfig } from './config/env';
 import { SecretBox } from './lib/crypto';
 import { DATA_REQUEST_QUEUE } from './jobs/data-requests';
+import { ApiRequestLog } from './services/api-request-log';
 import { LocalFileStore } from './services/file-store';
 import { logger } from './lib/logger';
 import type { AppDeps } from './types';
@@ -32,6 +33,7 @@ export const createDeps = (config: ApiConfig): AppDeps => {
     emailQueue,
     dataRequestQueue,
     files: new LocalFileStore(config.DATA_EXPORT_DIR),
+    apiRequestLog: new ApiRequestLog(clickhouse, logger),
     notifier,
     conversions: new ConversionProcessor({ prisma, redis, clickhouse, postbackQueue, notifier, log: logger }),
     secretBox: new SecretBox(config.ENCRYPTION_KEY),
@@ -40,5 +42,6 @@ export const createDeps = (config: ApiConfig): AppDeps => {
 };
 
 export const closeDeps = async (deps: AppDeps) => {
+  await deps.apiRequestLog.flush();
   await Promise.allSettled([deps.prisma.$disconnect(), deps.clickhouse.close(), deps.postbackQueue.close(), deps.emailQueue.close(), deps.dataRequestQueue.close(), deps.redis.quit()]);
 };

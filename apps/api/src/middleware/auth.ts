@@ -11,6 +11,7 @@ export const SESSION_COOKIE = 'ntrack_session';
 export const loadSession =
   ({ prisma }: AppDeps): RequestHandler =>
   async (req, _res, next) => {
+    if (req.auth) return next();
     const token = req.cookies?.[SESSION_COOKIE];
     if (typeof token !== 'string' || token.length < 20) return next();
     const session = await prisma.session.findUnique({

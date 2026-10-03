@@ -63,6 +63,9 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
       'reports.export',
       'finance.view',
       'users.view',
+      // Own API keys, limited to this advertiser's data.
+      'integrations.view',
+      'integrations.manage',
     ],
   },
   {
@@ -84,6 +87,8 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
       'reports.export',
       'finance.view',
       'integrations.view',
+      // Own API keys, limited to this publisher's data (replaces the Trackier publisher API).
+      'integrations.manage',
       'users.view',
     ],
   },

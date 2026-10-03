@@ -106,6 +106,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await deps.prisma.auditLog.deleteMany({ where: { organizationId: { in: orgIds } } })
   await deps.prisma.dataRequest.deleteMany({ where: { organizationId: { in: orgIds } } })
+  await deps.prisma.apiKey.deleteMany({ where: { organizationId: { in: orgIds } } })
   // Journal entries are append-only (onDelete: Restrict), so test cleanup removes them explicitly.
   await deps.prisma.ledgerEntry.deleteMany({ where: { journal: { organizationId: { in: orgIds } } } })
   await deps.prisma.ledgerJournal.deleteMany({ where: { organizationId: { in: orgIds } } })
@@ -761,5 +762,114 @@ describe('invoice billing snapshot', () => {
     await admin.patch(`/v1/advertisers/${advertiser.id}`, { companyName: 'Renamed Co', address: '2 New Road' })
     const issued = await admin.get(`/v1/finance/invoices/${invoice.id}`)
     expect(issued.body.data.advertiser).toMatchObject({ companyName: 'IT Snapshot Co', address: '1 Original Street' })
+  })
+})
+
+describe('API keys', () => {
+  const bearer = (secret: string) => ({
+    get: (url: string) => request(app).get(url).set('authorization', `Bearer ${secret}`),
+    post: (url: string, body?: object) => request(app).post(url).set('authorization', `Bearer ${secret}`).send(body),
+  })
+
+  it('acts within the permissions chosen for the key, without CSRF, and never reaches account areas', async () => {
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    const created = await admin.post('/v1/api-keys', { name: 'IT reporting key', permissions: ['campaigns.view', 'reports.view'] })
+    expect(created.status).toBe(201)
+    const secret = created.body.data.secret as string
+    expect(secret).toMatch(/^ntk_live_/)
+    expect(created.body.data.key.secretHash).toBeUndefined()
+    const listed = await admin.get('/v1/api-keys')
+    expect(JSON.stringify(listed.body.data)).not.toContain(secret)
+
+    const key = bearer(secret)
+    expect((await key.get('/v1/campaigns')).status).toBe(200)
+    expect((await key.post('/v1/campaigns', { name: 'nope' })).status).toBe(403)
+    expect((await key.get('/v1/users')).status).toBe(403)
+    expect((await key.get('/v1/auth/me')).status).toBe(403)
+    expect((await key.get('/v1/api-keys')).status).toBe(403)
+    expect((await request(app).get('/v1/campaigns').set('authorization', 'Bearer ntk_live_' + 'x'.repeat(43))).status).toBe(401)
+
+    // A key with write permission can create without a CSRF token.
+    const writer = await admin.post('/v1/api-keys', { name: 'IT writer key', permissions: ['campaigns.view', 'campaigns.manage'] })
+    const made = await bearer(writer.body.data.secret).post('/v1/campaigns', {
+      name: 'IT API campaign',
+      advertiserId: advertiserA,
+      category: 'Ecommerce',
+      landingPages: [{ name: 'Main', url: 'https://brand.example.com/?c={click_id}', isDefault: true }],
+    })
+    expect(made.status).toBe(201)
+  })
+
+  it('refuses account-management permissions and anything the creator does not hold', async () => {
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    expect((await admin.post('/v1/api-keys', { name: 'bad', permissions: ['users.manage'] })).status).toBe(400)
+    expect((await admin.post('/v1/api-keys', { name: 'bad', permissions: ['not.a.permission'] })).status).toBe(400)
+    const publisher = await signIn(`pub-a1-${run}@it.test`)
+    expect((await publisher.post('/v1/api-keys', { name: 'bad', permissions: ['campaigns.manage'] })).status).toBe(400)
+  })
+
+  it('limits a publisher key to that publisher and never exposes revenue', async () => {
+    const publisher = await signIn(`pub-a1-${run}@it.test`)
+    const created = await publisher.post('/v1/api-keys', { name: 'IT publisher feed', permissions: ['campaigns.view', 'conversions.view'] })
+    expect(created.status).toBe(201)
+    const key = bearer(created.body.data.secret)
+    const campaigns = await key.get('/v1/campaigns')
+    expect(campaigns.status).toBe(200)
+    expect(campaigns.body.data.items.map((c: { id: string }) => c.id)).toContain(campaignA)
+    expect(JSON.stringify(campaigns.body.data)).not.toMatch(/defaultRevenue/)
+    // Organization-wide managers see every key; the publisher sees only their own.
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    expect((await admin.get('/v1/api-keys')).body.data.map((k: { name: string }) => k.name)).toContain('IT publisher feed')
+    expect((await publisher.get('/v1/api-keys')).body.data.every((k: { name: string }) => k.name === 'IT publisher feed')).toBe(true)
+  })
+
+  it('stops working when revoked, rotated, expired, or when the creator loses access', async () => {
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    const revoked = (await admin.post('/v1/api-keys', { name: 'IT revoke', permissions: ['campaigns.view'] })).body.data
+    expect((await admin.post(`/v1/api-keys/${revoked.key.id}/revoke`)).status).toBe(200)
+    expect((await bearer(revoked.secret).get('/v1/campaigns')).status).toBe(401)
+
+    const original = (await admin.post('/v1/api-keys', { name: 'IT rotate', permissions: ['campaigns.view'] })).body.data
+    const rotated = await admin.post(`/v1/api-keys/${original.key.id}/rotate`)
+    expect(rotated.status).toBe(200)
+    expect((await bearer(original.secret).get('/v1/campaigns')).status).toBe(401)
+    expect((await bearer(rotated.body.data.secret).get('/v1/campaigns')).status).toBe(200)
+
+    const expiring = (await admin.post('/v1/api-keys', { name: 'IT expire', permissions: ['campaigns.view'] })).body.data
+    await deps.prisma.apiKey.update({ where: { id: expiring.key.id }, data: { expiresAt: new Date(Date.now() - 1000) } })
+    expect((await bearer(expiring.secret).get('/v1/campaigns')).status).toBe(401)
+
+    await createUser(orgA, 'network_admin', `key-owner-${run}@it.test`)
+    const owner = await signIn(`key-owner-${run}@it.test`)
+    const owned = (await owner.post('/v1/api-keys', { name: 'IT owner leaves', permissions: ['campaigns.view'] })).body.data
+    expect((await bearer(owned.secret).get('/v1/campaigns')).status).toBe(200)
+    const ownerUser = await deps.prisma.user.findUniqueOrThrow({ where: { email: `key-owner-${run}@it.test` } })
+    await deps.prisma.organizationMember.updateMany({ where: { organizationId: orgA, userId: ownerUser.id }, data: { status: 'disabled' } })
+    expect((await bearer(owned.secret).get('/v1/campaigns')).status).toBe(401)
+  })
+
+  it('enforces the per-minute limit and the IP allowlist, and logs every request', async () => {
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    const limited = (await admin.post('/v1/api-keys', { name: 'IT limited', permissions: ['campaigns.view'], requestsPerMinute: 10 })).body.data
+    const statuses: number[] = []
+    for (let i = 0; i < 11; i += 1) statuses.push((await bearer(limited.secret).get('/v1/campaigns')).status)
+    expect(statuses.slice(0, 10).every((s) => s === 200)).toBe(true)
+    expect(statuses[10]).toBe(429)
+
+    const fenced = (await admin.post('/v1/api-keys', { name: 'IT fenced', permissions: ['campaigns.view'], allowedIps: ['198.51.100.0/24'] })).body.data
+    expect((await bearer(fenced.secret).get('/v1/campaigns')).status).toBe(403)
+    expect((await admin.post('/v1/api-keys', { name: 'bad ip', permissions: ['campaigns.view'], allowedIps: ['not-an-ip'] })).status).toBe(400)
+
+    // Rows are recorded when each response finishes; give the last ones a moment, then flush.
+    let logs = await admin.get(`/v1/api-keys/logs?keyId=${limited.key.id}`)
+    for (let attempt = 0; attempt < 20 && logs.body.data.items.length < 11; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      await deps.apiRequestLog.flush()
+      logs = await admin.get(`/v1/api-keys/logs?keyId=${limited.key.id}`)
+    }
+    expect(logs.status).toBe(200)
+    expect(logs.body.data.items.length).toBeGreaterThanOrEqual(11)
+    expect(logs.body.data.items.map((r: { status: number }) => r.status)).toContain(429)
+    expect(logs.body.data.items[0].path).toBe('/v1/campaigns')
   })
 })

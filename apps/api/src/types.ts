@@ -8,6 +8,7 @@ import type { Notifier } from '@ntrack/notifications';
 import type { EmailJob } from '@ntrack/shared';
 import type { ApiConfig } from './config/env';
 import type { SecretBox } from './lib/crypto';
+import type { ApiRequestLog } from './services/api-request-log';
 import type { FileStore } from './services/file-store';
 import type { Logger } from './lib/logger';
 
@@ -23,6 +24,7 @@ export interface AppDeps {
   /** Approved privacy requests waiting to run (processed by jobs/data-requests). */
   dataRequestQueue: Queue<{ requestId?: string }>;
   files: FileStore;
+  apiRequestLog: ApiRequestLog;
   notifier: Notifier;
   secretBox: SecretBox;
   logger: Logger;
@@ -50,6 +52,8 @@ export interface AuthContext {
   scope: AccessScope;
   /** True when the organization requires MFA and the user has not enabled it yet. */
   mfaSetupRequired: boolean;
+  /** Set when the request is authenticated with an API key instead of a session. */
+  apiKey?: { id: string; name: string };
 }
 
 /** Auth context after requireOrganization: the organization is guaranteed. */

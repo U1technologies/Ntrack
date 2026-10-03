@@ -58,6 +58,7 @@ model Organization {
   scheduledReports   ScheduledReport[]
   invitations        Invitation[]
   dataRequests       DataRequest[]
+  apiKeys            ApiKey[]
 
   @@map("organizations")
 }
@@ -75,6 +76,8 @@ model OrganizationSettings {
   referrerPolicy                String           @default("strict-origin-when-cross-origin") @map("referrer_policy")
   /// Default response for standard campaigns. Transparent (Google Ads) campaigns always use 302.
   redirectResponse              RedirectResponse @default(redirect_302) @map("redirect_response")
+  /// Requests per day allowed for all API keys of the organization (usage limit; no billing yet).
+  apiDailyRequestLimit          Int              @default(100000) @map("api_daily_request_limit")
   requireHttpsDestinations      Boolean          @default(true) @map("require_https_destinations")
   paramMap                      Json             @map("param_map")
   defaultAttributionWindowHours Int              @default(720) @map("default_attribution_window_hours")
@@ -1435,4 +1438,33 @@ model DataRequest {
   @@index([organizationId, createdAt(sort: Desc)])
   @@index([requestedById])
   @@map("data_requests")
+}
+
+/// Programmatic access for integrations. The secret is shown once; only its SHA-256 is stored. A
+/// key acts as the person who created it, limited to the permissions chosen for the key, and stops
+/// working when that person loses access.
+model ApiKey {
+  id                String    @id @default(uuid()) @db.Uuid
+  organizationId    String    @map("organization_id") @db.Uuid
+  name              String
+  /// First characters of the key (e.g. "ntk_live_A1b2C3") so people can recognise it.
+  prefix            String
+  secretHash        String    @unique @map("secret_hash")
+  permissions       String[]  @default([])
+  allowedIps        String[]  @default([]) @map("allowed_ips")
+  requestsPerMinute Int       @default(120) @map("requests_per_minute")
+  createdById       String    @map("created_by_id") @db.Uuid
+  expiresAt         DateTime? @map("expires_at")
+  lastUsedAt        DateTime? @map("last_used_at")
+  lastUsedIp        String    @default("") @map("last_used_ip")
+  revokedAt         DateTime? @map("revoked_at")
+  /// Set when a key is replaced by rotation, pointing at the new key.
+  replacedById      String?   @map("replaced_by_id") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@map("api_keys")
 }
