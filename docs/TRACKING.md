@@ -7,7 +7,7 @@ https://<tracking-domain>/click/<slug>?sub1=…&sub2=…&source=…&lp=<landing-
 ```
 
 - `<slug>` is a random 10-character token. Internal IDs never appear in URLs.
-- Nextagmedia's own tracking domain is `trk.nextagmedia.com` (DNS on Hostinger, pointing directly at the tracker, not through the website).
+- Nextagmedia's own tracking links use the main website domain: `https://nextagmedia.com/click/<slug>`. The website (Vercel) forwards `/click`, `/postback`, `/pixel` and `/ntrack.js` to the tracker; the forwarding is planned and not built yet.
 - Public paths: `/click/<slug>`, `/postback`, `/pixel`, `/ntrack.js`. The short forms `/c/<slug>`, `/pb`, `/px` and `/js/ntrack.js` keep working for links and snippets created earlier.
 - A link only works on the domain it was generated for (domain and tenant isolation).
 - Parameter names are configurable per organization (Settings → Tracking & privacy). Defaults: `sub1`–`sub5`, `source`, `ext_click_id`, `lp`, `dl`.
@@ -25,7 +25,7 @@ The visitor goes to the campaign landing page (the link's page, a valid `?lp=` c
 Tracking template for the ad platform:
 
 ```
-https://trk.nextagmedia.com/click/<slug>?url={lpurl}
+https://nextagmedia.com/click/<slug>?url={lpurl}
 ```
 
 The tracker redirects to **exactly** the URL in the destination parameter (`url` by default), after checking it is HTTPS and on the campaign's allowed hosts. It never substitutes another destination:
