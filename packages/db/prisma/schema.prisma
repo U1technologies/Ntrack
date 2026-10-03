@@ -59,6 +59,8 @@ model Organization {
   invitations        Invitation[]
   dataRequests       DataRequest[]
   apiKeys            ApiKey[]
+  importBatches      ImportBatch[]
+  externalRefs       ExternalRef[]
 
   @@map("organizations")
 }
@@ -1467,4 +1469,81 @@ model ApiKey {
 
   @@index([organizationId, createdAt(sort: Desc)])
   @@map("api_keys")
+}
+
+enum ImportStatus {
+  validated
+  importing
+  imported
+  failed
+  undone
+}
+
+/// One uploaded file for migration from another tracker (Trackier). Rows are staged and checked
+/// first; nothing is written to live tables until the user commits the batch.
+model ImportBatch {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  source         String       @default("trackier")
+  entity         String
+  fileName       String       @default("") @map("file_name")
+  status         ImportStatus @default(validated)
+  headers        String[]     @default([])
+  mapping        Json         @default("{}")
+  options        Json         @default("{}")
+  totals         Json         @default("{}")
+  createdById    String       @map("created_by_id") @db.Uuid
+  importedAt     DateTime?    @map("imported_at")
+  undoneAt       DateTime?    @map("undone_at")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  rows         ImportRow[]
+
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@map("import_batches")
+}
+
+/// match: new | already_imported | possible_duplicate | existing | invalid
+/// decision: create | link | skip (null = waiting for the user)
+model ImportRow {
+  id              String   @id @default(uuid()) @db.Uuid
+  batchId         String   @map("batch_id") @db.Uuid
+  rowNumber       Int      @map("row_number")
+  externalId      String   @default("") @map("external_id")
+  raw             Json
+  input           Json     @default("{}")
+  errors          String[] @default([])
+  warnings        String[] @default([])
+  match           String
+  matchedId       String?  @map("matched_id") @db.Uuid
+  matchedLabel    String   @default("") @map("matched_label")
+  decision        String?
+  result          String   @default("")
+  createdEntityId String?  @map("created_entity_id") @db.Uuid
+
+  batch ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([batchId, rowNumber])
+  @@map("import_rows")
+}
+
+/// Links a record in another system (e.g. a Trackier campaign ID) to the NTrack record it became,
+/// so the same external record is never imported twice and later files can refer to it.
+model ExternalRef {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  source         String
+  entityType     String   @map("entity_type")
+  externalId     String   @map("external_id")
+  entityId       String   @map("entity_id") @db.Uuid
+  batchId        String?  @map("batch_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, source, entityType, externalId])
+  @@index([organizationId, entityType, entityId])
+  @@map("external_refs")
 }

@@ -9,6 +9,7 @@ import { createConversionsRouter } from './modules/conversions/conversions.route
 import { createDomainsRouter } from './modules/domains/domains.routes';
 import { createFinanceRouter } from './modules/finance/finance.routes';
 import { createFraudRouter } from './modules/fraud/fraud.routes';
+import { createImportsRouter } from './modules/imports/imports.routes';
 import { createLinksRouter } from './modules/links/links.routes';
 import { createNotificationsRouter } from './modules/notifications/notifications.routes';
 import { createOrganizationsRouter } from './modules/organizations/organizations.routes';
@@ -47,6 +48,7 @@ export const createV1Router = (deps: AppDeps) => {
   router.use('/notifications', createNotificationsRouter(deps));
   router.use('/privacy', createPrivacyRouter(deps));
   router.use('/api-keys', createApiKeysRouter(deps));
+  router.use('/imports', createImportsRouter(deps));
   router.use('/analytics', createAnalyticsRouter(deps));
   router.use('/scheduled-reports', createScheduledReportsRouter(deps));
   router.use('/tools', createToolsRouter(deps));

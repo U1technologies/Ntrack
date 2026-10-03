@@ -107,6 +107,8 @@ afterAll(async () => {
   await deps.prisma.auditLog.deleteMany({ where: { organizationId: { in: orgIds } } })
   await deps.prisma.dataRequest.deleteMany({ where: { organizationId: { in: orgIds } } })
   await deps.prisma.apiKey.deleteMany({ where: { organizationId: { in: orgIds } } })
+  await deps.prisma.externalRef.deleteMany({ where: { organizationId: { in: orgIds } } })
+  await deps.prisma.importBatch.deleteMany({ where: { organizationId: { in: orgIds } } })
   // Journal entries are append-only (onDelete: Restrict), so test cleanup removes them explicitly.
   await deps.prisma.ledgerEntry.deleteMany({ where: { journal: { organizationId: { in: orgIds } } } })
   await deps.prisma.ledgerJournal.deleteMany({ where: { organizationId: { in: orgIds } } })
@@ -871,5 +873,98 @@ describe('API keys', () => {
     expect(logs.body.data.items.length).toBeGreaterThanOrEqual(11)
     expect(logs.body.data.items.map((r: { status: number }) => r.status)).toContain(429)
     expect(logs.body.data.items[0].path).toBe('/v1/campaigns')
+  })
+})
+
+describe('Trackier import', () => {
+  const waitFor = async (admin: Awaited<ReturnType<typeof signIn>>, id: string) => {
+    for (let i = 0; i < 50; i += 1) {
+      const batch = (await admin.get(`/v1/imports/${id}`)).body.data.batch
+      if (batch.status !== 'importing') return batch
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    throw new Error('import did not finish')
+  }
+
+  it('stages, validates and matches advertisers, links duplicates without changing them, and never re-imports', async () => {
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    const csv = ['Advertiser ID,Company,Email,Status', `T-ADV-1-${run},Trackier Brand ${run},brand-${run}@it.test,Active`, `T-ADV-2-${run},Whatever Name,a@it.test,Active`, `T-ADV-3-${run},No Email Co,,Active`].join('\n')
+    const staged = await admin.post('/v1/imports', { entity: 'advertisers', fileName: 'advertisers.csv', csv })
+    expect(staged.status).toBe(201)
+    expect(staged.body.data.totals).toMatchObject({ rows: 3, new: 1, possible_duplicate: 1, invalid: 1 })
+    const rows = (await admin.get(`/v1/imports/${staged.body.data.id}`)).body.data.rows.items
+    expect(rows.find((r: { match: string }) => r.match === 'possible_duplicate')).toMatchObject({ matchedId: advertiserA, decision: 'link' })
+    expect(rows.find((r: { match: string }) => r.match === 'invalid').errors.join(' ')).toMatch(/email/i)
+    // Nothing is written before commit.
+    expect(await deps.prisma.advertiser.count({ where: { organizationId: orgA, companyName: `Trackier Brand ${run}` } })).toBe(0)
+
+    expect((await admin.post(`/v1/imports/${staged.body.data.id}/commit`)).status).toBe(200)
+    const done = await waitFor(admin, staged.body.data.id)
+    expect(done.status).toBe('imported')
+    expect(done.totals).toMatchObject({ result_created: 1, result_linked: 1 })
+    const advertiserARow = await deps.prisma.advertiser.findUniqueOrThrow({ where: { id: advertiserA } })
+    expect(advertiserARow.companyName).toBe('IT Advertiser A')
+    expect(await deps.prisma.externalRef.count({ where: { organizationId: orgA, externalId: { in: [`T-ADV-1-${run}`, `T-ADV-2-${run}`] } } })).toBe(2)
+
+    const again = await admin.post('/v1/imports', { entity: 'advertisers', csv })
+    expect(again.body.data.totals).toMatchObject({ already_imported: 2, invalid: 1 })
+  })
+
+  it('imports campaigns as drafts with Trackier macros translated, and rejects unknown macros or advertisers', async () => {
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    const csv = [
+      'Campaign ID,Campaign Name,Advertiser ID,URL,Status,Payout,Revenue,Countries',
+      `T-CMP-1-${run},Imported Offer ${run},T-ADV-1-${run},https://shop.example.com/?cid={click_id}&s1={p1},Active,4.50,6.00,"US, IN"`,
+      `T-CMP-2-${run},Bad Macro ${run},T-ADV-1-${run},https://shop.example.com/?x={gaid},Active,1,2,US`,
+      `T-CMP-3-${run},No Advertiser ${run},T-ADV-404,https://shop.example.com/,Active,1,2,US`,
+    ].join('\n')
+    const staged = await admin.post('/v1/imports', { entity: 'campaigns', csv })
+    expect(staged.status).toBe(201)
+    expect(staged.body.data.totals).toMatchObject({ new: 1, invalid: 2 })
+    const rows = (await admin.get(`/v1/imports/${staged.body.data.id}`)).body.data.rows.items
+    expect(rows.map((r: { errors: string[] }) => r.errors.join(' ')).join(' ')).toMatch(/\{gaid\}.*|Unknown Trackier macros/)
+    await admin.post(`/v1/imports/${staged.body.data.id}/commit`)
+    expect((await waitFor(admin, staged.body.data.id)).status).toBe('imported')
+    const campaign = await deps.prisma.campaign.findFirstOrThrow({ where: { organizationId: orgA, name: `Imported Offer ${run}` }, include: { landingPages: true } })
+    expect(campaign.status).toBe('draft')
+    expect(campaign.geoAllowed.sort()).toEqual(['IN', 'US'])
+    expect(campaign.defaultPayout.toString()).toBe('4.5')
+    expect(campaign.landingPages[0]!.url).toBe('https://shop.example.com/?cid={click_id}&s1={subid1}')
+  })
+
+  it('imports payout tiers, publishers and approvals, and never overwrites existing access', async () => {
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    const payouts = await admin.post('/v1/imports', { entity: 'payouts', csv: ['Campaign ID,Goal,Country,Payout,Revenue', `T-CMP-1-${run},Lead,US,2.00,3.00`].join('\n') })
+    expect(payouts.body.data.totals).toMatchObject({ new: 1 })
+    await admin.post(`/v1/imports/${payouts.body.data.id}/commit`)
+    await waitFor(admin, payouts.body.data.id)
+    const campaign = await deps.prisma.campaign.findFirstOrThrow({ where: { organizationId: orgA, name: `Imported Offer ${run}` } })
+    expect(await deps.prisma.campaignPayout.count({ where: { campaignId: campaign.id, event: 'lead', country: 'US' } })).toBe(1)
+
+    const publishers = await admin.post('/v1/imports', { entity: 'publishers', csv: ['Publisher ID,Publisher Name,Email,Status', `T-PUB-1-${run},Imported Pub ${run},pub-${run}@it.test,Active`].join('\n') })
+    await admin.post(`/v1/imports/${publishers.body.data.id}/commit`)
+    await waitFor(admin, publishers.body.data.id)
+    const approvals = await admin.post('/v1/imports', { entity: 'approvals', csv: ['Campaign ID,Publisher ID,Status', `T-CMP-1-${run},T-PUB-1-${run},Approved`].join('\n') })
+    await admin.post(`/v1/imports/${approvals.body.data.id}/commit`)
+    await waitFor(admin, approvals.body.data.id)
+    const again = await admin.post('/v1/imports', { entity: 'approvals', csv: ['Campaign ID,Publisher ID,Status', `T-CMP-1-${run},T-PUB-1-${run},Blocked`].join('\n') })
+    expect(again.body.data.totals).toMatchObject({ existing: 1 })
+    const row = (await admin.get(`/v1/imports/${again.body.data.id}`)).body.data.rows.items[0]
+    expect((await admin.patch(`/v1/imports/${again.body.data.id}/rows/${row.id}`, { decision: 'create' })).status).toBe(400)
+  })
+
+  it('undoes an import by removing only the records it created, and is closed to restricted roles', async () => {
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    const staged = await admin.post('/v1/imports', { entity: 'advertisers', csv: ['Advertiser ID,Company,Email', `T-ADV-UNDO-${run},Undo Me ${run},undo-${run}@it.test`].join('\n') })
+    await admin.post(`/v1/imports/${staged.body.data.id}/commit`)
+    await waitFor(admin, staged.body.data.id)
+    expect(await deps.prisma.advertiser.count({ where: { organizationId: orgA, companyName: `Undo Me ${run}` } })).toBe(1)
+    const undone = await admin.post(`/v1/imports/${staged.body.data.id}/undo`)
+    expect(undone.body.data).toMatchObject({ deleted: 1 })
+    expect(await deps.prisma.advertiser.count({ where: { organizationId: orgA, companyName: `Undo Me ${run}` } })).toBe(0)
+    expect(await deps.prisma.externalRef.count({ where: { externalId: `T-ADV-UNDO-${run}` } })).toBe(0)
+
+    const publisher = await signIn(`pub-a1-${run}@it.test`)
+    expect((await publisher.get('/v1/imports')).status).toBe(403)
   })
 })
