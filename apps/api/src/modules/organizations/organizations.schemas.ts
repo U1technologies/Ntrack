@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { CURRENCIES, REFERRER_POLICIES } from '@ntrack/shared';
+import { CURRENCIES, REDIRECT_RESPONSES, REFERRER_POLICIES } from '@ntrack/shared';
 
 const timezone = z.string().refine((tz) => {
   try {
@@ -32,6 +32,8 @@ export const UpdateSettingsBody = z
     ipStorage: z.enum(['truncated', 'hashed', 'none']),
     collectReferrer: z.boolean(),
     referrerPolicy: z.enum(REFERRER_POLICIES),
+    /** Default for standard campaigns; transparent campaigns always use 302. */
+    redirectResponse: z.enum(REDIRECT_RESPONSES),
     requireHttpsDestinations: z.boolean(),
     defaultAttributionWindowHours: z.number().int().min(1).max(24 * 365),
     uniqueClickWindowHours: z.number().int().min(1).max(24 * 30),

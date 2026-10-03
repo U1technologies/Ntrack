@@ -44,6 +44,10 @@ export interface ClickRow {
   is_valid: number;
   invalid_reason: string;
   redirect_mode: string;
+  response_type: string;
+  http_status: number;
+  referrer_policy: string;
+  used_fallback: number;
   latency_ms: number;
 }
 
@@ -88,6 +92,11 @@ export const toClickRow = (event: ClickEvent, enrichment: ClickEnrichment): Clic
   is_valid: event.isValid ? 1 : 0,
   invalid_reason: event.invalidReason,
   redirect_mode: event.redirectMode,
+  // Events queued by a tracker version before these fields existed default to empty values.
+  response_type: event.responseType ?? '',
+  http_status: event.httpStatus ?? 0,
+  referrer_policy: event.referrerPolicy ?? '',
+  used_fallback: event.usedFallback ? 1 : 0,
   latency_ms: Math.max(0, Math.round(event.latencyMs)),
 });
 

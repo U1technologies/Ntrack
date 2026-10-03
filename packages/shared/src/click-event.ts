@@ -42,6 +42,12 @@ export interface ClickEvent {
   isValid: boolean;
   invalidReason: InvalidClickReason | '';
   redirectMode: string;
+  /** What the tracker actually sent: redirect_302, html_200, or error (404/410/400 page). */
+  responseType: 'redirect_302' | 'html_200' | 'error';
+  httpStatus: number;
+  referrerPolicy: string;
+  /** The visitor was sent to the campaign fallback URL instead of the offer. */
+  usedFallback: boolean;
   latencyMs: number;
 }
 

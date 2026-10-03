@@ -1,6 +1,6 @@
 import type { z } from 'zod';
 import type { Campaign, Prisma } from '@ntrack/db';
-import { generatePublicId } from '@ntrack/shared';
+import { effectiveRedirectResponse, effectiveReferrerPolicy, generatePublicId, redirectTypeOf } from '@ntrack/shared';
 import { AppError } from '../../lib/errors';
 import { paginated } from '../../lib/response';
 import { serialize } from '../../lib/serialize';
@@ -8,13 +8,15 @@ import { assertAdvertiserAccess, campaignWhere, isAdvertiserPortal, isPublisherP
 import { writeAudit } from '../../services/audit';
 import { validateLandingPageTemplate } from '../../services/destination-validation';
 import type { AppDeps, OrgAuthContext, RequestMeta } from '../../types';
-import type {
-  BulkBody,
-  CreateCampaignBody,
-  LandingPageBody,
-  ListCampaignsQuery,
-  StatusBody,
-  UpdateCampaignBody,
+import {
+  TRANSPARENT_NEEDS_302,
+  transparentUses302,
+  type BulkBody,
+  type CreateCampaignBody,
+  type LandingPageBody,
+  type ListCampaignsQuery,
+  type StatusBody,
+  type UpdateCampaignBody,
 } from './campaigns.schemas';
 
 type CreateInput = z.infer<typeof CreateCampaignBody>;
@@ -99,7 +101,28 @@ export class CampaignsService {
   async get(auth: OrgAuthContext, id: string) {
     await this.findAccessible(auth, id);
     const campaign = await this.prisma.campaign.findUniqueOrThrow({ where: { id }, include: detailInclude });
-    return presentCampaign(campaign, auth);
+    return { ...presentCampaign(campaign, auth), effectiveRedirect: await this.effectiveRedirect(campaign) };
+  }
+
+  /**
+   * What the tracker actually applies, resolved exactly as config sync does: campaign override,
+   * else organization default; transparent campaigns are always 302.
+   */
+  private async effectiveRedirect(campaign: Pick<Campaign, 'organizationId' | 'redirectMode' | 'redirectResponse' | 'referrerPolicy'>) {
+    const settings = await this.prisma.organizationSettings.findUnique({
+      where: { organizationId: campaign.organizationId },
+      select: { redirectResponse: true, referrerPolicy: true },
+    });
+    const response = effectiveRedirectResponse(campaign.redirectMode, campaign.redirectResponse, settings?.redirectResponse);
+    const referrerPolicy = effectiveReferrerPolicy(campaign.referrerPolicy, settings?.referrerPolicy);
+    return {
+      response,
+      referrerPolicy,
+      type: redirectTypeOf(response, referrerPolicy),
+      responseFromDefault: campaign.redirectMode !== 'transparent' && campaign.redirectResponse === null,
+      referrerPolicyFromDefault: effectiveReferrerPolicy(campaign.referrerPolicy, null) !== campaign.referrerPolicy,
+      forcedByGoogleAdsRule: campaign.redirectMode === 'transparent',
+    };
   }
 
   private async assertDomains(auth: OrgAuthContext, domainIds: string[]) {
@@ -188,6 +211,12 @@ export class CampaignsService {
     if (ratesChanged && !auth.permissions.has('payouts.manage')) throw AppError.forbidden('Changing rates requires the payout management permission');
     if (input.redirectMode === 'transparent' && (input.allowedHosts ?? before.allowedHosts).length === 0) {
       throw AppError.badRequest('Transparent redirects need at least one allowed destination host');
+    }
+    // A partial update can change either field alone, so check the combined result.
+    const nextMode = input.redirectMode ?? before.redirectMode;
+    const nextResponse = input.redirectResponse !== undefined ? input.redirectResponse : before.redirectResponse;
+    if (!transparentUses302({ redirectMode: nextMode, redirectResponse: nextResponse })) {
+      throw AppError.badRequest(TRANSPARENT_NEEDS_302, { fields: [{ path: 'redirectResponse', message: TRANSPARENT_NEEDS_302 }] });
     }
 
     const { domainIds, startsAt, endsAt, ...fields } = input;

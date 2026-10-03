@@ -7,6 +7,7 @@ import {
   DEVICE_TYPES,
   LANGUAGE_CODE_PATTERN,
   PAYOUT_MODELS,
+  REDIRECT_RESPONSES,
   REFERRER_POLICIES,
   TARGET_BROWSERS,
   TARGET_OPERATING_SYSTEMS,
@@ -81,6 +82,8 @@ const campaignFields = {
   totalBudget: amount.nullish(),
   frequencyCap: z.number().int().min(1).max(1000).nullish(),
   redirectMode: z.enum(['standard', 'transparent']).default('standard'),
+  /** Null = organization default. Combined with referrerPolicy = no-referrer for the "hide referrer" types. */
+  redirectResponse: z.enum(REDIRECT_RESPONSES).nullish(),
   destinationParam: paramName.default('url'),
   transparentClickIdParam: z.union([z.literal(''), paramName]).default(''),
   allowDeepLinks: z.boolean().default(false),
@@ -105,6 +108,13 @@ const datesInOrder = (value: { startsAt?: string | null; endsAt?: string | null 
 const transparentNeedsHosts = (value: { redirectMode?: string; allowedHosts?: string[] }) =>
   value.redirectMode !== 'transparent' || (value.allowedHosts?.length ?? 0) > 0;
 
+export const TRANSPARENT_NEEDS_302 =
+  'Transparent (Google Ads) campaigns use an HTTP 302 redirect in NTrack. Google Ads requires tracking redirects to be server-side, and an HTML 200 page is not a server-side redirect.';
+
+/** Google Ads compatible (transparent) tracking only works with server-side redirects. */
+export const transparentUses302 = (value: { redirectMode?: string | null; redirectResponse?: string | null }) =>
+  value.redirectMode !== 'transparent' || value.redirectResponse !== 'html_200';
+
 export const CreateCampaignBody = z
   .object({
     ...campaignFields,
@@ -112,7 +122,8 @@ export const CreateCampaignBody = z
     landingPages: z.array(LandingPageBody).min(1, 'Add at least one landing page').max(50),
   })
   .refine(datesInOrder, { path: ['endsAt'], message: 'End date must be after the start date' })
-  .refine(transparentNeedsHosts, { path: ['allowedHosts'], message: 'Transparent redirects need at least one allowed destination host' });
+  .refine(transparentNeedsHosts, { path: ['allowedHosts'], message: 'Transparent redirects need at least one allowed destination host' })
+  .refine(transparentUses302, { path: ['redirectResponse'], message: TRANSPARENT_NEEDS_302 });
 
 export const UpdateCampaignBody = patchSchema(z.object(campaignFields)).refine(datesInOrder, { path: ['endsAt'], message: 'End date must be after the start date' });
 

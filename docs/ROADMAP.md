@@ -46,6 +46,10 @@ Phase 2 gaps: mobile measurement partner (MMP) callback presets (works today thr
 | Monthly and total budget stop (`budget_reached`), refreshed every minute | Built |
 | Data-centre IP flag from official AWS / GCP / Oracle ranges | Built (flag only) |
 
+## Redirect types — built
+
+302, 302 with Hide Referrer, 200 OK (HTML page) and 200 with Hide Referrer; organization default plus campaign override; Google Ads (transparent) campaigns locked to 302 at API, config sync and tracker; response details in click logs and reports; redirect tester for all four types. Tests: 172 unit, 30 integration.
+
 ## Phase 3: money and verticals — built
 
 | Area | Status |

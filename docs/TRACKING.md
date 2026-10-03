@@ -32,7 +32,23 @@ The tracker redirects to **exactly** the URL in the destination parameter (`url`
 - Campaign paused, capped or otherwise unpayable → the visitor still reaches the declared URL; the click is recorded as invalid.
 - Optional: append the click ID under a named parameter (e.g. `ntclid`). Leave it empty to follow the declared URL byte for byte.
 
-Use **Tracking Domains → Redirect tester** to check behaviour hop by hop. It reports observed behaviour only. It is not Google certification; certification comes from Google's own review.
+### Redirect types (response)
+
+Configured per organization (default) and per campaign (override). "Hide referrer" is not a separate setting: it is the Referrer-Policy set to `no-referrer`.
+
+| Type | Response | Referrer | Google Ads |
+|---|---|---|---|
+| 302 | HTTP 302 + `Location` | Configured Referrer-Policy | Yes |
+| 302 with Hide Referrer | HTTP 302 + `Location` | `Referrer-Policy: no-referrer` | Yes |
+| 200 OK | HTTP 200 HTML page: shows the destination host and URL, meta refresh + `location.replace` + visible link | Header and `<meta name="referrer">` | **No** |
+| 200 with Hide Referrer | Same page | `no-referrer` in header, meta and `rel="noreferrer"` on the link | **No** |
+
+Rules:
+- **Transparent (Google Ads) campaigns always use HTTP 302.** The API rejects `html_200` for them (on create and on any update that would combine the two), config sync forces 302 into the snapshot, and the tracker checks again. An organization default of 200 applies to standard campaigns only. Basis: Google Ads Help, "About tracking in Google Ads" (support.google.com/google-ads/answer/6076199): "The redirects also need to be server-side." and "The tracking template URL and all redirect URLs need to be HTTPS to work." Google's documentation does not name a specific status code; 302 is NTrack's choice of server-side redirect. "About parallel tracking" (answer/7544674) gives no further redirect rules.
+- The HTML page goes through exactly the same destination validation as a 302, is identical for every visitor and user agent, is `no-store` and `noindex`, and runs under a nonce-based CSP. The fallback URL uses the same response type.
+- Every click logs `response_type` (`redirect_302`, `html_200`, `error`), `http_status`, `referrer_policy` and `used_fallback`. They appear in the click log (with a response filter) and as report dimensions. Responses also carry `X-NTrack-Response` and `X-NTrack-Click-Id` headers for debugging.
+
+Use **Tracking Domains → Redirect tester** to check behaviour hop by hop. It works for all four types: it compares the configured type with what the tracker actually sent, follows HTML navigation as well as `Location`, checks the Referrer-Policy (header, page meta, link rel), checks the HTML page is transparent, confirms a browser and Google's AdsBot get the same answer (HEAD probes, not counted as clicks), applies the Google Ads rule and verifies the final destination. It reports observed behaviour only. It is not Google certification; certification comes from Google's own review.
 
 ## What NTrack will not do
 

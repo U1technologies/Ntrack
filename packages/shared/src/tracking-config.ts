@@ -28,6 +28,46 @@ export type ReferrerPolicy = (typeof REFERRER_POLICIES)[number];
  */
 export type RedirectMode = 'standard' | 'transparent';
 
+/**
+ * redirect_302: HTTP 302 with a Location header (server-side redirect).
+ * html_200:     HTTP 200 HTML page that shows the destination and navigates the browser to it.
+ *               Never used for transparent (Google Ads) campaigns: Google Ads requires tracking
+ *               redirects to be server-side (Google Ads Help, "About tracking in Google Ads"), and
+ *               this page is browser-side navigation. NTrack uses 302 for those campaigns; Google's
+ *               documentation does not name a specific 3xx status code.
+ */
+export const REDIRECT_RESPONSES = ['redirect_302', 'html_200'] as const;
+export type RedirectResponse = (typeof REDIRECT_RESPONSES)[number];
+
+/**
+ * The four Trackier-style options shown in the console. "Hide referrer" is not stored separately:
+ * it is the existing Referrer-Policy set to no-referrer.
+ */
+export const REDIRECT_TYPES = {
+  '302': { response: 'redirect_302', hideReferrer: false },
+  '302_hide_referrer': { response: 'redirect_302', hideReferrer: true },
+  '200': { response: 'html_200', hideReferrer: false },
+  '200_hide_referrer': { response: 'html_200', hideReferrer: true },
+} as const satisfies Record<string, { response: RedirectResponse; hideReferrer: boolean }>;
+export type RedirectType = keyof typeof REDIRECT_TYPES;
+
+export const redirectTypeOf = (response: RedirectResponse, referrerPolicy: string): RedirectType =>
+  `${response === 'html_200' ? '200' : '302'}${referrerPolicy === 'no-referrer' ? '_hide_referrer' : ''}` as RedirectType;
+
+/** Campaign Referrer-Policy if it is a known value, otherwise the organization default. */
+export const effectiveReferrerPolicy = (campaignPolicy: string | null | undefined, organizationPolicy: string | null | undefined): ReferrerPolicy => {
+  const known = (value: string | null | undefined): value is ReferrerPolicy => (REFERRER_POLICIES as readonly string[]).includes(value ?? '');
+  if (known(campaignPolicy)) return campaignPolicy;
+  return known(organizationPolicy) ? organizationPolicy : 'strict-origin-when-cross-origin';
+};
+
+/** Effective response for a campaign. Transparent campaigns are always 302, whatever is configured. */
+export const effectiveRedirectResponse = (
+  redirectMode: RedirectMode,
+  campaignResponse: RedirectResponse | null | undefined,
+  organizationDefault: RedirectResponse | null | undefined
+): RedirectResponse => (redirectMode === 'transparent' ? 'redirect_302' : (campaignResponse ?? organizationDefault ?? 'redirect_302'));
+
 export interface TrackingParamMap {
   sub1: string;
   sub2: string;
@@ -93,6 +133,8 @@ export interface CampaignSnapshot {
   requireHttps: boolean;
   allowDeepLinks: boolean;
   redirectMode: RedirectMode;
+  /** Effective response (already forced to redirect_302 for transparent campaigns by config sync). */
+  redirectResponse: RedirectResponse;
   destinationParam: string;
   /**
    * Transparent mode only: when set, the click ID is appended to the declared destination under

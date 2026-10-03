@@ -28,6 +28,10 @@ export const CLICK_DIMENSIONS = {
   sub4: { expr: 'sub4', type: 'string' },
   sub5: { expr: 'sub5', type: 'string' },
   invalid_reason: { expr: 'invalid_reason', type: 'string' },
+  response_type: { expr: 'response_type', type: 'string' },
+  http_status: { expr: 'toString(http_status)', type: 'string' },
+  referrer_policy: { expr: 'referrer_policy', type: 'string' },
+  used_fallback: { expr: "if(used_fallback = 1, 'fallback', 'offer')", type: 'string' },
 } as const;
 export type ClickDimension = keyof typeof CLICK_DIMENSIONS;
 
@@ -59,6 +63,8 @@ const FILTER_COLUMNS: Partial<Record<ClickDimension, { column: string; type: 'UU
   sub4: { column: 'sub4', type: 'String' },
   sub5: { column: 'sub5', type: 'String' },
   invalid_reason: { column: 'invalid_reason', type: 'String' },
+  response_type: { column: 'response_type', type: 'String' },
+  referrer_policy: { column: 'referrer_policy', type: 'String' },
 };
 
 export const isClickDimension = (value: string): value is ClickDimension => value in CLICK_DIMENSIONS;
@@ -206,6 +212,10 @@ const CLICK_LOG_COLUMNS = [
   'is_valid',
   'invalid_reason',
   'redirect_mode',
+  'response_type',
+  'http_status',
+  'referrer_policy',
+  'used_fallback',
   'latency_ms',
 ];
 

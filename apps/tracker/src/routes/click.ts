@@ -18,6 +18,7 @@ import type { TrackerConfig } from '../config';
 import { decideClick } from '../services/click-decision';
 import { dayKey } from '../services/day-key';
 import { errorPage } from '../services/error-page';
+import { buildHtmlRedirect } from '../services/html-redirect';
 import { extractRequestFacts, sanitizeReferrer } from '../services/request-facts';
 import type { TrackerStore } from '../services/tracker-store';
 
@@ -86,6 +87,11 @@ export const registerClickRoutes = (app: FastifyInstance, store: TrackerStore, c
       frequencyCapReached: campaign.frequencyCap !== null && visitorClicksToday > campaign.frequencyCap,
     });
 
+    // Defence in depth: config sync already forces 302 for transparent campaigns; check again here.
+    const responseType: ClickEvent['responseType'] =
+      decision.kind === 'reject' ? 'error' : campaign.redirectMode === 'transparent' ? 'redirect_302' : (campaign.redirectResponse ?? 'redirect_302');
+    const httpStatus = decision.kind === 'reject' ? decision.status : responseType === 'html_200' ? 200 : 302;
+
     const referrer = campaign.collectReferrer ? sanitizeReferrer(facts.referrer) : { url: '', domain: '' };
     const isValid = decision.invalidReason === null;
     const { subs } = decision;
@@ -122,6 +128,10 @@ export const registerClickRoutes = (app: FastifyInstance, store: TrackerStore, c
       isValid,
       invalidReason: decision.invalidReason ?? '',
       redirectMode: campaign.redirectMode,
+      responseType,
+      httpStatus,
+      referrerPolicy: decision.kind === 'reject' ? '' : campaign.referrerPolicy,
+      usedFallback: decision.kind === 'redirect' && decision.usedFallback,
       latencyMs: 0,
     };
     const context: ClickContext = {
@@ -164,13 +174,18 @@ export const registerClickRoutes = (app: FastifyInstance, store: TrackerStore, c
       reply.header('Set-Cookie', `${CLICK_COOKIE}=${clickId}; Max-Age=${campaign.clickCookieDays * 86_400}; Path=/; Secure; HttpOnly; SameSite=None`);
     }
 
-    return reply
-      .code(302)
-      .header('Location', decision.location)
+    reply
       .header('Cache-Control', 'no-store, max-age=0')
       .header('Referrer-Policy', campaign.referrerPolicy)
       .header('X-Robots-Tag', 'noindex, nofollow')
       .header('X-NTrack-Click-Id', clickId)
-      .send();
+      .header('X-NTrack-Response', responseType);
+
+    if (responseType === 'html_200') {
+      // Same validated destination as the 302 path; only the hand-off to the browser differs.
+      const page = buildHtmlRedirect(decision.location, campaign.referrerPolicy);
+      return reply.code(200).header('Content-Security-Policy', page.csp).type('text/html; charset=utf-8').send(page.html);
+    }
+    return reply.code(302).header('Location', decision.location).send();
   });
 };

@@ -22,8 +22,17 @@ let app: Express
 const orgIds: string[] = []
 const userIds: string[] = []
 
-/** A signed-in client with its own cookie jar and CSRF token. */
-const signIn = async (email: string) => {
+/**
+ * A signed-in client with its own cookie jar and CSRF token. Sessions are reused per user so the
+ * suite stays under the real login rate limit (10 per IP and email per 15 minutes).
+ */
+const sessions = new Map<string, ReturnType<typeof createSession>>()
+const signIn = (email: string) => {
+  if (!sessions.has(email)) sessions.set(email, createSession(email))
+  return sessions.get(email)!
+}
+
+const createSession = async (email: string) => {
   const agent = request.agent(app)
   const csrf = await agent.get('/v1/auth/csrf')
   let token = csrf.body.data.csrfToken as string
@@ -401,5 +410,86 @@ describe('search monetization', () => {
     expect(feed.status).toBe(201)
     expect((await adminA.patch(`/v1/search/feeds/${feed.body.data.id}`, { campaignId: campaignB })).status).toBe(400)
     expect((await adminA.patch(`/v1/search/feeds/${feed.body.data.id}`, { campaignId: campaignA })).status).toBe(200)
+  })
+})
+
+describe('redirect response types', () => {
+  const base = {
+    advertiserId: '',
+    category: 'Ecommerce',
+    landingPages: [{ name: 'Main', url: 'https://brand.example.com/?c={click_id}', isDefault: true }],
+  }
+
+  it('rejects HTML 200 for transparent (Google Ads) campaigns on create', async () => {
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    const response = await admin.post('/v1/campaigns', {
+      ...base,
+      advertiserId: advertiserA,
+      name: 'IT Transparent 200',
+      redirectMode: 'transparent',
+      allowedHosts: ['brand.example.com'],
+      redirectResponse: 'html_200',
+    })
+    expect(response.status).toBe(400)
+    expect(JSON.stringify(response.body)).toContain('302')
+  })
+
+  it('allows all four types on standard campaigns and blocks switching a 200 campaign to transparent', async () => {
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    const created = await admin.post('/v1/campaigns', { ...base, advertiserId: advertiserA, name: 'IT Standard 200', redirectResponse: 'html_200', referrerPolicy: 'no-referrer' })
+    expect(created.status).toBe(201)
+    const id = created.body.data.id
+    expect(created.body.data.redirectResponse).toBe('html_200')
+
+    // Partial update changing only the mode must still be checked against the stored response.
+    const toTransparent = await admin.patch(`/v1/campaigns/${id}`, { redirectMode: 'transparent', allowedHosts: ['brand.example.com'] })
+    expect(toTransparent.status).toBe(400)
+    // Switching both together to 302 + transparent is fine.
+    const ok = await admin.patch(`/v1/campaigns/${id}`, { redirectMode: 'transparent', allowedHosts: ['brand.example.com'], redirectResponse: 'redirect_302' })
+    expect(ok.status).toBe(200)
+    // And a transparent campaign cannot be switched to 200 on its own either.
+    expect((await admin.patch(`/v1/campaigns/${id}`, { redirectResponse: 'html_200' })).status).toBe(400)
+    // Back to standard with the organization default (null) is allowed.
+    expect((await admin.patch(`/v1/campaigns/${id}`, { redirectMode: 'standard', redirectResponse: null })).status).toBe(200)
+  })
+
+  it('applies an HTML 200 organization default to standard campaigns only; transparent snapshots stay 302', async () => {
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    expect((await admin.patch('/v1/organizations/current/settings', { redirectResponse: 'html_200' })).status).toBe(200)
+    try {
+      const transparent = await admin.post('/v1/campaigns', {
+        ...base,
+        advertiserId: advertiserA,
+        name: 'IT Transparent default',
+        redirectMode: 'transparent',
+        allowedHosts: ['brand.example.com'],
+      })
+      expect(transparent.status).toBe(201)
+      const standard = await admin.post('/v1/campaigns', { ...base, advertiserId: advertiserA, name: 'IT Standard default' })
+      expect(standard.status).toBe(201)
+      const snapshot = async (id: string) => JSON.parse((await deps.redis.get(REDIS_KEYS.campaign(id))) ?? '{}') as { redirectResponse?: string }
+      expect((await snapshot(transparent.body.data.id)).redirectResponse).toBe('redirect_302')
+      expect((await snapshot(standard.body.data.id)).redirectResponse).toBe('html_200')
+    } finally {
+      await admin.patch('/v1/organizations/current/settings', { redirectResponse: 'redirect_302' })
+    }
+  })
+
+  it('reports the effective redirect type, including a hidden referrer inherited from the organization', async () => {
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    const created = await admin.post('/v1/campaigns', { ...base, advertiserId: advertiserA, name: 'IT Inherit referrer', redirectResponse: 'redirect_302' })
+    expect(created.status).toBe(201)
+    expect((await admin.patch('/v1/organizations/current/settings', { referrerPolicy: 'no-referrer' })).status).toBe(200)
+    try {
+      const detail = await admin.get(`/v1/campaigns/${created.body.data.id}`)
+      expect(detail.body.data.effectiveRedirect).toMatchObject({ response: 'redirect_302', referrerPolicy: 'no-referrer', type: '302_hide_referrer', referrerPolicyFromDefault: true })
+    } finally {
+      await admin.patch('/v1/organizations/current/settings', { referrerPolicy: 'strict-origin-when-cross-origin' })
+    }
+  })
+
+  it('rejects unknown redirect responses', async () => {
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    expect((await admin.patch('/v1/organizations/current/settings', { redirectResponse: 'meta_refresh' })).status).toBe(400)
   })
 })

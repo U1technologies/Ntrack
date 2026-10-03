@@ -71,6 +71,7 @@ export const ClickLogQuery = DateRangeQuery.extend({
   clickId: z.string().trim().max(32).optional(),
   country: z.string().trim().max(2).optional(),
   onlyInvalid: z.enum(['true', 'false']).optional(),
+  responseType: z.enum(['redirect_302', 'html_200', 'error']).optional(),
 });
 
 export class AnalyticsService {
@@ -224,6 +225,7 @@ export class AnalyticsService {
     if (query.publisherId) filters.publisher = [query.publisherId];
     if (query.domainId) filters.domain = [query.domainId];
     if (query.country) filters.country = [query.country.toUpperCase()];
+    if (query.responseType) filters.response_type = [query.responseType];
     const { rows, total } = await runClickLog<Row>(this.deps.clickhouse, {
       scope: analyticsScope(auth),
       from: range.from,

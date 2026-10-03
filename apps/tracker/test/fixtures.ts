@@ -47,6 +47,7 @@ export const makeCampaign = (overrides: Partial<CampaignSnapshot> = {}): Campaig
   requireHttps: true,
   allowDeepLinks: false,
   redirectMode: 'standard',
+  redirectResponse: 'redirect_302',
   destinationParam: 'url',
   transparentClickIdParam: '',
   uniqueClickWindowHours: 24,

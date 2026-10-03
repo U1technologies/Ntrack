@@ -135,13 +135,15 @@ All accept `preset` (`today`, `yesterday`, `last_7_days`, `last_30_days`, `this_
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/analytics/dashboard` | KPIs, trend, distributions, top lists, recent clicks, pending approvals |
-| GET | `/analytics/clicks?campaignId=&publisherId=&domainId=&clickId=&country=&onlyInvalid=` | Click log, 50/page |
+| GET | `/analytics/clicks?campaignId=&publisherId=&domainId=&clickId=&country=&onlyInvalid=&responseType=` | Click log, 50/page. Rows include `response_type`, `http_status`, `referrer_policy`, `used_fallback` |
 | POST | `/analytics/reports/clicks` | `{ dimensions[], metrics[], filters{}, sort, limit, offset }` |
 | POST | `/analytics/reports/clicks/export?format=csv\|xlsx` | Same body, CSV or Excel response |
 | POST | `/analytics/reports/performance` | Clicks + conversions merged by dimension; metrics also `conversions approved_conversions pending_conversions rejected_conversions revenue payout sale_amount profit margin epc rpc cr roi aov` (role-filtered) |
 | POST | `/analytics/reports/performance/export?format=csv\|xlsx` | CSV or Excel |
 
-Dimensions: `date hour campaign publisher advertiser domain link landing_page country device os browser source referrer_domain sub1…sub5 invalid_reason`. Metrics: `clicks unique_clicks valid_clicks invalid_clicks avg_latency_ms`.
+Dimensions: `date hour campaign publisher advertiser domain link landing_page country device os browser source referrer_domain sub1…sub5 invalid_reason response_type http_status referrer_policy used_fallback`.
+
+Redirect types: `PATCH /organizations/current/settings { redirectResponse: redirect_302|html_200, referrerPolicy }` sets the default; campaigns take `redirectResponse` (null = default) and `referrerPolicy`. `html_200` with `redirectMode: transparent` returns 400. `POST /tools/redirect-test { trackingUrl, destinationParam?, expectedFinalUrl? }` returns `configuration`, `observedResponse`, `chain` (with `kind`, headers, HTML navigation details), `probes` and `checks`. Metrics: `clicks unique_clicks valid_clicks invalid_clicks avg_latency_ms`.
 
 ## Finance
 
