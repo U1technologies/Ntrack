@@ -105,6 +105,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await deps.prisma.auditLog.deleteMany({ where: { organizationId: { in: orgIds } } })
+  await deps.prisma.dataRequest.deleteMany({ where: { organizationId: { in: orgIds } } })
   // Journal entries are append-only (onDelete: Restrict), so test cleanup removes them explicitly.
   await deps.prisma.ledgerEntry.deleteMany({ where: { journal: { organizationId: { in: orgIds } } } })
   await deps.prisma.ledgerJournal.deleteMany({ where: { organizationId: { in: orgIds } } })
@@ -114,6 +115,7 @@ afterAll(async () => {
   await deps.prisma.organization.deleteMany({ where: { id: { in: orgIds } } })
   await deps.prisma.notificationPreference.deleteMany({ where: { userId: { in: userIds } } })
   await deps.prisma.user.deleteMany({ where: { email: { endsWith: `-${run}@it.test` } } })
+  await deps.prisma.user.deleteMany({ where: { id: { in: userIds } } })
   await deps.prisma.user.deleteMany({ where: { id: { in: userIds } } })
   await closeDeps(deps)
 })
@@ -632,5 +634,132 @@ describe('password reset', () => {
     expect((await fresh.post('/v1/auth/login').set('x-csrf-token', csrf).send({ email, password: PASSWORD })).status).toBe(401)
     expect((await fresh.post('/v1/auth/login').set('x-csrf-token', csrf).send({ email, password: 'BrandNewPass12345' })).status).toBe(200)
     expect(user.id).toBeTruthy()
+  })
+})
+
+describe('privacy requests', () => {
+  const runNow = async (id: string) => {
+    const { PrivacyService } = await import('../../src/modules/privacy/privacy.service')
+    await new PrivacyService(deps, deps.files, async () => undefined).process(id)
+    return deps.prisma.dataRequest.findUniqueOrThrow({ where: { id } })
+  }
+  const zipFiles = async (agentGet: (url: string) => request.Test, url: string) => {
+    const response = await agentGet(url).buffer(true).parse((res, done) => {
+      const chunks: Buffer[] = []
+      res.on('data', (c: Buffer) => chunks.push(c))
+      res.on('end', () => done(null, Buffer.concat(chunks)))
+    })
+    if (response.status !== 200) return { status: response.status, files: {} as Record<string, string> }
+    const JSZip = (await import('jszip')).default
+    const zip = await JSZip.loadAsync(response.body as Buffer)
+    const files: Record<string, string> = {}
+    for (const name of Object.keys(zip.files)) files[name] = await zip.files[name]!.async('string')
+    return { status: 200, files }
+  }
+
+  it('exports a publisher with its own data only, never advertiser revenue', async () => {
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    const created = await admin.post('/v1/privacy/requests', { type: 'export', subjectType: 'publisher', subjectId: publisherA1, reason: 'DSAR-1 test' })
+    expect(created.status).toBe(201)
+    expect(created.body.data.status).toBe('approved')
+    expect((await runNow(created.body.data.id)).status).toBe('completed')
+    const download = await zipFiles(admin.get, `/v1/privacy/requests/${created.body.data.id}/download`)
+    expect(download.status).toBe(200)
+    expect(Object.keys(download.files)).toEqual(expect.arrayContaining(['README.txt', 'profile.json', 'conversions.csv', 'tracking-links.json']))
+    expect(JSON.parse(download.files['profile.json']!).companyName).toBe('IT Publisher A1')
+    expect(download.files['conversions.csv']!.split('\n')[0]).not.toContain('revenue')
+    expect(JSON.stringify(download.files)).not.toMatch(/tokenHash|passwordHash/)
+  })
+
+  it('keeps self-service exports private to the person they describe', async () => {
+    const analystEmail = `analyst-a-${run}@it.test`
+    const analyst = await signIn(analystEmail)
+    const mine = await analyst.post('/v1/privacy/me/export')
+    expect(mine.status).toBe(201)
+    expect((await runNow(mine.body.data.id)).status).toBe('completed')
+    const own = await zipFiles(analyst.get, `/v1/privacy/requests/${mine.body.data.id}/download`)
+    expect(own.status).toBe(200)
+    expect(JSON.parse(own.files['profile.json']!).email).toBe(analystEmail)
+
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    const listed = await admin.get('/v1/privacy/requests')
+    expect(listed.body.data.items.map((i: { id: string }) => i.id)).not.toContain(mine.body.data.id)
+    expect((await admin.get(`/v1/privacy/requests/${mine.body.data.id}/download`)).status).toBe(404)
+    // Analysts cannot manage other people's requests.
+    expect((await analyst.get('/v1/privacy/requests')).status).toBe(403)
+  })
+
+  it('erases a publisher only after a second person approves, keeping financial records', async () => {
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    const publisher = (await admin.post('/v1/publishers', { companyName: 'IT Erase Me', email: 'erase@it.test', contactName: 'Pat Person', phone: '+1 555 0100', status: 'active' })).body.data
+    const requested = await admin.post('/v1/privacy/requests', { type: 'erasure', subjectType: 'publisher', subjectId: publisher.id, reason: 'DSAR-2 test' })
+    expect(requested.body.data.status).toBe('pending_review')
+    expect((await admin.post(`/v1/privacy/requests/${requested.body.data.id}/approve`, { note: 'self approve' })).status).toBe(403)
+
+    await createUser(orgA, 'network_admin', `admin-a2-${run}@it.test`)
+    const second = await signIn(`admin-a2-${run}@it.test`)
+    expect((await second.post(`/v1/privacy/requests/${requested.body.data.id}/approve`, { note: 'verified identity' })).status).toBe(200)
+    const done = await runNow(requested.body.data.id)
+    expect(done.status).toBe('completed')
+    const erased = await deps.prisma.publisher.findUniqueOrThrow({ where: { id: publisher.id } })
+    expect(erased).toMatchObject({ companyName: `Erased publisher ${publisher.publicId}`, email: '', contactName: '', phone: '', status: 'suspended', taxInfoEncrypted: null })
+    expect((done.summary as { kept: string[] }).kept).toEqual(expect.arrayContaining(['conversions', 'invoices (with their billing snapshot)']))
+  })
+
+  it('erases a user account: anonymised, signed out, email scrubbed from the audit trail', async () => {
+    const email = `erase-user-${run}@it.test`
+    const user = await createUser(orgA, 'read_only', email)
+    const session = await signIn(email)
+    expect((await session.get('/v1/auth/me')).status).toBe(200)
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    const requested = await admin.post('/v1/privacy/requests', { type: 'erasure', subjectType: 'user', subjectId: user.id, reason: 'DSAR-3 test' })
+    expect(requested.status).toBe(201)
+    const second = await signIn(`admin-a2-${run}@it.test`)
+    expect((await second.post(`/v1/privacy/requests/${requested.body.data.id}/approve`, {})).status).toBe(200)
+    expect((await runNow(requested.body.data.id)).status).toBe('completed')
+
+    const after = await deps.prisma.user.findUniqueOrThrow({ where: { id: user.id } })
+    expect(after).toMatchObject({ email: `erased-${user.id}@erased.invalid`, name: 'Erased user', passwordHash: null, status: 'disabled' })
+    expect((await session.get('/v1/auth/me')).status).toBe(401)
+    expect(await deps.prisma.auditLog.count({ where: { OR: [{ summary: { contains: email } }, { actorEmail: email }] } })).toBe(0)
+    // The membership record is kept (disabled), not deleted.
+    expect(await deps.prisma.organizationMember.findUnique({ where: { organizationId_userId: { organizationId: orgA, userId: user.id } } })).toMatchObject({ status: 'disabled' })
+  })
+
+  it('refuses organization erasure and duplicate open requests', async () => {
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    expect((await admin.post('/v1/privacy/requests', { type: 'erasure', subjectType: 'organization', subjectId: orgA, reason: 'not supported' })).status).toBe(400)
+    const first = await admin.post('/v1/privacy/requests', { type: 'erasure', subjectType: 'advertiser', subjectId: advertiserA, reason: 'DSAR-4 test' })
+    expect(first.status).toBe(201)
+    expect((await admin.post('/v1/privacy/requests', { type: 'erasure', subjectType: 'advertiser', subjectId: advertiserA, reason: 'again' })).status).toBe(409)
+    expect((await admin.post(`/v1/privacy/requests/${first.body.data.id}/reject`, { note: 'test only' })).status).toBe(200)
+  })
+})
+
+describe('invoice billing snapshot', () => {
+  it('keeps the billing details an invoice was issued with after the advertiser changes or is erased', async () => {
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    const advertiser = (await admin.post('/v1/advertisers', { companyName: 'IT Snapshot Co', email: 'billing@snapshot.it.test', address: '1 Original Street', country: 'US' })).body.data
+    const invoice = await deps.prisma.invoice.create({
+      data: {
+        publicId: `inv_it${run}`,
+        organizationId: orgA,
+        advertiserId: advertiser.id,
+        type: 'invoice',
+        number: `INV-IT-${run}`,
+        status: 'draft',
+        currency: 'USD',
+        periodStart: new Date('2026-09-01'),
+        periodEnd: new Date('2026-09-30'),
+        subtotal: '100.00',
+        taxRate: '0',
+        taxAmount: '0',
+        total: '100.00',
+      },
+    })
+    expect((await admin.post(`/v1/finance/invoices/${invoice.id}/issue`)).status).toBe(200)
+    await admin.patch(`/v1/advertisers/${advertiser.id}`, { companyName: 'Renamed Co', address: '2 New Road' })
+    const issued = await admin.get(`/v1/finance/invoices/${invoice.id}`)
+    expect(issued.body.data.advertiser).toMatchObject({ companyName: 'IT Snapshot Co', address: '1 Original Street' })
   })
 })

@@ -8,6 +8,7 @@ import type { Notifier } from '@ntrack/notifications';
 import type { EmailJob } from '@ntrack/shared';
 import type { ApiConfig } from './config/env';
 import type { SecretBox } from './lib/crypto';
+import type { FileStore } from './services/file-store';
 import type { Logger } from './lib/logger';
 
 export interface AppDeps {
@@ -19,6 +20,9 @@ export interface AppDeps {
   conversions: ConversionProcessor;
   postbackQueue: Queue;
   emailQueue: Queue<EmailJob>;
+  /** Approved privacy requests waiting to run (processed by jobs/data-requests). */
+  dataRequestQueue: Queue<{ requestId?: string }>;
+  files: FileStore;
   notifier: Notifier;
   secretBox: SecretBox;
   logger: Logger;

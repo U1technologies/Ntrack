@@ -57,6 +57,7 @@ model Organization {
   notifications      Notification[]
   scheduledReports   ScheduledReport[]
   invitations        Invitation[]
+  dataRequests       DataRequest[]
 
   @@map("organizations")
 }
@@ -946,30 +947,33 @@ enum InvoiceStatus {
 }
 
 model Invoice {
-  id             String        @id @default(uuid()) @db.Uuid
-  publicId       String        @unique @map("public_id")
-  organizationId String        @map("organization_id") @db.Uuid
-  advertiserId   String        @map("advertiser_id") @db.Uuid
-  type           InvoiceType   @default(invoice)
-  number         String
-  status         InvoiceStatus @default(draft)
-  currency       String        @db.Char(3)
-  periodStart    DateTime      @map("period_start")
-  periodEnd      DateTime      @map("period_end")
-  subtotal       Decimal       @db.Decimal(18, 2)
-  taxRate        Decimal       @default(0) @map("tax_rate") @db.Decimal(5, 2)
-  taxAmount      Decimal       @default(0) @map("tax_amount") @db.Decimal(18, 2)
-  total          Decimal       @db.Decimal(18, 2)
-  amountPaid     Decimal       @default(0) @map("amount_paid") @db.Decimal(18, 2)
-  issuedAt       DateTime?     @map("issued_at")
-  dueDate        DateTime?     @map("due_date")
-  paidAt         DateTime?     @map("paid_at")
-  voidedAt       DateTime?     @map("voided_at")
-  notes          String        @default("")
-  creditForId    String?       @map("credit_for_id") @db.Uuid
-  createdById    String?       @map("created_by_id") @db.Uuid
-  createdAt      DateTime      @default(now()) @map("created_at")
-  updatedAt      DateTime      @updatedAt @map("updated_at")
+  id              String        @id @default(uuid()) @db.Uuid
+  publicId        String        @unique @map("public_id")
+  organizationId  String        @map("organization_id") @db.Uuid
+  advertiserId    String        @map("advertiser_id") @db.Uuid
+  type            InvoiceType   @default(invoice)
+  number          String
+  status          InvoiceStatus @default(draft)
+  currency        String        @db.Char(3)
+  periodStart     DateTime      @map("period_start")
+  periodEnd       DateTime      @map("period_end")
+  subtotal        Decimal       @db.Decimal(18, 2)
+  taxRate         Decimal       @default(0) @map("tax_rate") @db.Decimal(5, 2)
+  taxAmount       Decimal       @default(0) @map("tax_amount") @db.Decimal(18, 2)
+  total           Decimal       @db.Decimal(18, 2)
+  amountPaid      Decimal       @default(0) @map("amount_paid") @db.Decimal(18, 2)
+  issuedAt        DateTime?     @map("issued_at")
+  dueDate         DateTime?     @map("due_date")
+  paidAt          DateTime?     @map("paid_at")
+  voidedAt        DateTime?     @map("voided_at")
+  notes           String        @default("")
+  /// Advertiser billing details frozen when the invoice is issued, so later edits or a privacy
+  /// erasure of the advertiser never change an issued invoice.
+  billingSnapshot Json?         @map("billing_snapshot")
+  creditForId     String?       @map("credit_for_id") @db.Uuid
+  createdById     String?       @map("created_by_id") @db.Uuid
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
 
   organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   advertiser   Advertiser    @relation(fields: [advertiserId], references: [id], onDelete: Restrict)
@@ -1376,4 +1380,59 @@ model PasswordResetToken {
 
   @@index([userId])
   @@map("password_reset_tokens")
+}
+
+enum DataRequestType {
+  export
+  erasure
+}
+
+enum DataRequestStatus {
+  pending_review
+  approved
+  processing
+  completed
+  rejected
+  failed
+}
+
+enum DataSubjectType {
+  user
+  publisher
+  advertiser
+  organization
+}
+
+/// Privacy request (GDPR / DPDP): export a data subject's data, or erase their personal data.
+/// Erasure anonymises personal fields and keeps business and financial records; nothing is
+/// executed until a second person approves it.
+model DataRequest {
+  id             String            @id @default(uuid()) @db.Uuid
+  organizationId String            @map("organization_id") @db.Uuid
+  type           DataRequestType
+  subjectType    DataSubjectType   @map("subject_type")
+  subjectId      String            @map("subject_id") @db.Uuid
+  subjectLabel   String            @default("") @map("subject_label")
+  /// True when the subject asked for their own data from their account.
+  selfService    Boolean           @default(false) @map("self_service")
+  status         DataRequestStatus @default(pending_review)
+  reason         String            @default("")
+  requestedById  String            @map("requested_by_id") @db.Uuid
+  reviewedById   String?           @map("reviewed_by_id") @db.Uuid
+  reviewedAt     DateTime?         @map("reviewed_at")
+  reviewNote     String            @default("") @map("review_note")
+  completedAt    DateTime?         @map("completed_at")
+  fileKey        String?           @map("file_key")
+  fileSize       Int?              @map("file_size")
+  fileExpiresAt  DateTime?         @map("file_expires_at")
+  summary        Json              @default("{}")
+  error          String            @default("")
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([requestedById])
+  @@map("data_requests")
 }

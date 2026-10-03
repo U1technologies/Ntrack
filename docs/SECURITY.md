@@ -46,7 +46,10 @@
 - Encrypted at rest (application layer): MFA secrets, publisher tax info and payment details (`ENCRYPTION_KEY`). Card numbers are never accepted.
 - Audit log for every create/update/delete, login, failed login, MFA change and tool run. Sensitive keys are redacted before logging.
 - IPs truncated before storage in sessions, audit logs and (by default) clicks.
-- Personal data in scope for GDPR / India DPDP / CCPA: user accounts, publisher and advertiser contacts, tax/payment details, click IPs and user agents. **Data export and deletion endpoints are planned for Phase 4; until then handle requests manually and record them.** Someone at Nextagmedia should own privacy sign-off before launch.
+- Personal data in scope for GDPR / India DPDP / CCPA: user accounts, publisher and advertiser contacts, tax/payment details, click IPs and user agents.
+- Data subject requests: Settings → Privacy requests (export or erase users, publishers, advertisers; whole-organization export). Erasure needs a second person's approval, anonymises rather than deletes, and keeps records needed for accounting and tax. Issued invoices freeze the advertiser's billing details at issue time, so erasure never alters them. Every person can download their own data or ask for account deletion from Security settings.
+- Export archives are written with owner-only permissions, are downloadable for 7 days and are then removed by an hourly sweep. In production they must live on shared private storage (S3 with encryption and a lifecycle rule) because API replicas do not share disks.
+- Not yet automated: enforcing each organization's click retention setting (it would delete analytics data, so it waits for an explicit decision), and erasing a whole organization. Someone at Nextagmedia should own privacy sign-off before launch.
 
 ## Secrets
 

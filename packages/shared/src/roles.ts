@@ -169,13 +169,14 @@ export const SYSTEM_ROLE_TEMPLATES: SystemRoleTemplate[] = [
     name: 'Analyst',
     description: 'Read access to performance data and reporting.',
     scope: 'organization',
-    permissions: [...viewOnly(ALL_PERMISSION_KEYS).filter((k) => k !== 'finance.view'), 'reports.export', 'reports.schedule'],
+    // Privacy requests name people and their reasons, so general view roles never see them.
+    permissions: [...viewOnly(ALL_PERMISSION_KEYS).filter((k) => !['finance.view', 'privacy.view'].includes(k)), 'reports.export', 'reports.schedule'],
   },
   {
     slug: 'read_only',
     name: 'Read-only',
     description: 'View-only access to operational data, without financials.',
     scope: 'organization',
-    permissions: viewOnly(ALL_PERMISSION_KEYS).filter((k) => !['finance.view', 'audit.view', 'payouts.view'].includes(k)),
+    permissions: viewOnly(ALL_PERMISSION_KEYS).filter((k) => !['finance.view', 'audit.view', 'payouts.view', 'privacy.view'].includes(k)),
   },
 ];

@@ -20,6 +20,17 @@ const round2 = (value: Prisma.Decimal) => value.toDecimalPlaces(2, Prisma.Decima
  * payouts and exchange rates. Historical rows are never edited; every correction is a new
  * journal (and an audit entry).
  */
+/** Billing details frozen on an invoice when it is issued (see Invoice.billingSnapshot). */
+const billingSnapshotOf = (advertiser: { companyName: string; contactName: string; email: string; address: string; country: string; taxId: string }) => ({
+  companyName: advertiser.companyName,
+  contactName: advertiser.contactName,
+  email: advertiser.email,
+  address: advertiser.address,
+  country: advertiser.country,
+  taxId: advertiser.taxId,
+  capturedAt: new Date().toISOString(),
+});
+
 export class FinanceService {
   constructor(private readonly deps: AppDeps) {}
 
@@ -216,7 +227,7 @@ export class FinanceService {
   private async findInvoice(auth: OrgAuthContext, id: string) {
     const invoice = await this.prisma.invoice.findFirst({
       where: { id, organizationId: auth.organizationId, ...(auth.scope.restricted ? { advertiserId: { in: auth.scope.advertiserIds } } : {}) },
-      include: { lines: true, payments: { orderBy: { paidAt: 'asc' } }, advertiser: { select: { id: true, companyName: true, address: true, country: true, taxId: true, email: true } } },
+      include: { lines: true, payments: { orderBy: { paidAt: 'asc' } }, advertiser: { select: { id: true, companyName: true, contactName: true, address: true, country: true, taxId: true, email: true } } },
     });
     if (!invoice || (isAdvertiserPortal(auth.scope) && invoice.status === 'draft') || isPublisherPortal(auth.scope)) throw AppError.notFound('Invoice');
     return invoice;
@@ -225,7 +236,10 @@ export class FinanceService {
   async getInvoice(auth: OrgAuthContext, id: string) {
     const invoice = await this.findInvoice(auth, id);
     const organization = await this.prisma.organization.findUniqueOrThrow({ where: { id: auth.organizationId }, select: { name: true } });
-    return serialize({ ...invoice, issuer: organization });
+    // Issued invoices show the billing details they were issued with, not today's advertiser record.
+    const snapshot = invoice.billingSnapshot as Partial<ReturnType<typeof billingSnapshotOf>> | null;
+    const advertiser = snapshot ? { ...invoice.advertiser, ...snapshot, id: invoice.advertiser.id } : invoice.advertiser;
+    return serialize({ ...invoice, advertiser, issuer: organization });
   }
 
   /** Draft invoice from approved, not-yet-invoiced conversions in the period (one line per campaign). */
@@ -285,7 +299,10 @@ export class FinanceService {
     const advertiser = await this.prisma.advertiser.findUniqueOrThrow({ where: { id: invoice.advertiserId } });
     const days = advertiser.paymentTerms === 'CUSTOM' ? (advertiser.customPaymentDays ?? 30) : TERMS_DAYS[advertiser.paymentTerms];
     const issuedAt = new Date();
-    await this.prisma.invoice.update({ where: { id }, data: { status: 'issued', issuedAt, dueDate: new Date(issuedAt.getTime() + days * 86_400_000) } });
+    await this.prisma.invoice.update({
+      where: { id },
+      data: { status: 'issued', issuedAt, dueDate: new Date(issuedAt.getTime() + days * 86_400_000), billingSnapshot: billingSnapshotOf(advertiser) },
+    });
     await writeAudit(this.prisma, auth, meta, { action: 'invoice.issued', entityType: 'invoice', entityId: id, summary: invoice.number });
     return this.getInvoice(auth, id);
   }
@@ -318,6 +335,7 @@ export class FinanceService {
           type: 'credit_note',
           number,
           status: 'issued',
+          billingSnapshot: invoice.billingSnapshot ?? billingSnapshotOf(invoice.advertiser),
           currency: invoice.currency,
           periodStart: invoice.periodStart,
           periodEnd: invoice.periodEnd,

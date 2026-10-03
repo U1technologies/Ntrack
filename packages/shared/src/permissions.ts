@@ -97,6 +97,10 @@ export const PERMISSION_GROUPS = {
     label: 'Audit logs',
     actions: { view: 'View audit logs' },
   },
+  privacy: {
+    label: 'Privacy requests',
+    actions: { view: 'View data export and deletion requests', manage: 'Create, approve and run data export and deletion requests' },
+  },
 } as const;
 
 type Groups = typeof PERMISSION_GROUPS;

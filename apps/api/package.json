@@ -18,6 +18,7 @@
     "@ntrack/db": "*",
     "@ntrack/notifications": "*",
     "@ntrack/shared": "*",
+    "archiver": "^8.0.0",
     "bullmq": "^5.0.0",
     "cookie-parser": "^1.4.7",
     "exceljs": "^4.4.0",
@@ -33,6 +34,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@types/archiver": "^8.0.0",
     "@types/cookie-parser": "^1.4.8",
     "@types/express": "^5.0.6",
     "@types/qrcode": "^1.5.5",

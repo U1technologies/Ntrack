@@ -40,6 +40,20 @@ curl -c jar -b jar -H "X-CSRF-Token: <token>" -H "Content-Type: application/json
 
 Tokens are sent in the request body so they never appear in access logs; only SHA-256 hashes are stored.
 
+## Privacy requests (GDPR / DPDP)
+
+| Method | Path | Permission |
+|---|---|---|
+| GET | `/privacy/requests?status=&type=` | privacy.view (self-service exports are never listed to admins) |
+| POST | `/privacy/requests` | privacy.manage — `{ type: export\|erasure, subjectType: user\|publisher\|advertiser\|organization, subjectId, reason }`. Exports start at once; erasures wait for review. Organization erasure is not supported |
+| POST | `/privacy/requests/:id/approve` \| `/reject` | privacy.manage — `{ note }`. The requester cannot approve their own request (platform admins excepted) |
+| GET | `/privacy/requests/:id/download` | privacy.view, or the requester; self-service exports only by the person they describe. 7-day expiry, then 410 |
+| GET | `/privacy/me/requests` | Any member: own self-service requests |
+| POST | `/privacy/me/export` | Any member: export own data (all organizations) |
+| POST | `/privacy/me/erasure` | Any member except platform admins: `{ reason }`, goes to review |
+
+Exports are zip files (JSON and CSV, README included); credentials, token hashes and encrypted secrets are never included. Admin-created user exports cover the current organization only. Erasure anonymises personal fields and keeps conversions, ledger, invoices (with their billing snapshot), payments, payouts and the audit trail; the erased email is scrubbed from audit entries.
+
 ## Organization and access
 
 | Method | Path | Permission |

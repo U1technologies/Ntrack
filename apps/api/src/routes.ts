@@ -12,6 +12,7 @@ import { createLinksRouter } from './modules/links/links.routes';
 import { createNotificationsRouter } from './modules/notifications/notifications.routes';
 import { createOrganizationsRouter } from './modules/organizations/organizations.routes';
 import { createPostbacksRouter } from './modules/postbacks/postbacks.routes';
+import { createPrivacyRouter } from './modules/privacy/privacy.routes';
 import { createPublishersRouter } from './modules/publishers/publishers.routes';
 import { createScheduledReportsRouter } from './modules/scheduled-reports/scheduled-reports.routes';
 import { createSearchRouter } from './modules/search/search.routes';
@@ -43,6 +44,7 @@ export const createV1Router = (deps: AppDeps) => {
   router.use('/search', createSearchRouter(deps));
   router.use('/travel', createTravelRouter(deps));
   router.use('/notifications', createNotificationsRouter(deps));
+  router.use('/privacy', createPrivacyRouter(deps));
   router.use('/analytics', createAnalyticsRouter(deps));
   router.use('/scheduled-reports', createScheduledReportsRouter(deps));
   router.use('/tools', createToolsRouter(deps));

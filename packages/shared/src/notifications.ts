@@ -92,6 +92,13 @@ export const NOTIFICATION_TYPES = {
     audience: 'staff',
     defaults: { inApp: true, email: false },
   },
+  'privacy.request_submitted': {
+    label: 'Privacy requests',
+    description: 'Someone asked for personal data to be erased and it needs a second person to review it.',
+    permission: 'privacy.manage',
+    audience: 'staff',
+    defaults: { inApp: true, email: true },
+  },
   'report.failed': {
     label: 'Scheduled report failures',
     description: 'One of your scheduled reports could not be generated or sent.',

@@ -13,10 +13,13 @@ const neutralize = (value: unknown): string | number => {
   return /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
 };
 
-export const toCsv = (rows: Row[], columns: string[]): string => {
-  const cell = (value: unknown) => `"${String(neutralize(value)).replace(/"/g, '""')}"`;
-  return [columns.join(','), ...rows.map((row) => columns.map((c) => cell(row[c])).join(','))].join('\n');
-};
+const csvCell = (value: unknown) => `"${String(neutralize(value)).replace(/"/g, '""')}"`;
+
+/** One CSV line (with trailing newline) for streaming exports. */
+export const csvLine = (values: unknown[]): string => `${values.map(csvCell).join(',')}\n`;
+
+export const toCsv = (rows: Row[], columns: string[]): string =>
+  [columns.join(','), ...rows.map((row) => columns.map((c) => csvCell(row[c])).join(','))].join('\n');
 
 export const toXlsx = async (rows: Row[], columns: string[], sheetName = 'Report'): Promise<Buffer> => {
   const workbook = new ExcelJS.Workbook();

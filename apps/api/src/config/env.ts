@@ -36,6 +36,10 @@ const EnvSchema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((value) => value === 'true'),
+  /** Where privacy export archives are written (local disk; object storage in production). */
+  DATA_EXPORT_DIR: z.string().default('.local/exports'),
+  /** Days an export archive stays downloadable before it is removed. */
+  DATA_EXPORT_TTL_DAYS: z.coerce.number().int().min(1).max(30).default(7),
   /** Email is sent by the workers; the API only reports whether it is configured. */
   SMTP_HOST: z.string().optional(),
   SMTP_FROM: z.string().optional(),
