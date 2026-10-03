@@ -5,6 +5,7 @@ import { hashPassword } from '../../lib/password';
 import { paginated } from '../../lib/response';
 import { writeAudit } from '../../services/audit';
 import type { AppDeps, OrgAuthContext, RequestMeta } from '../../types';
+import { notifyPasswordChanged } from '../auth/password-reset.service';
 import type { AssignmentsBody, CreateMemberBody, ListMembersQuery, UpdateMemberBody } from './users.schemas';
 
 const memberInclude = {
@@ -58,8 +59,11 @@ export class UsersService {
     return paginated(withAssignments, total, query.page, query.pageSize);
   }
 
-  /** Validates the role belongs to the org, is grantable by the actor, and has the link its scope needs. */
-  private async resolveRole(auth: OrgAuthContext, roleId: string, advertiserId?: string | null, publisherId?: string | null) {
+  /**
+   * Validates the role belongs to the org, is grantable by the actor, has the link its scope needs,
+   * and (for restricted actors) only links to advertisers/publishers inside the actor's own scope.
+   */
+  async resolveRole(auth: OrgAuthContext, roleId: string, advertiserId?: string | null, publisherId?: string | null) {
     const role = await this.prisma.role.findFirst({ where: { id: roleId, organizationId: auth.organizationId }, include: { permissions: true } });
     if (!role) throw AppError.badRequest('Unknown role');
     if (!auth.user.isPlatformAdmin && role.permissions.some((p) => !auth.permissions.has(p.permissionKey))) {
@@ -67,6 +71,12 @@ export class UsersService {
     }
     if (role.scope === 'advertiser' && !advertiserId) throw AppError.badRequest('Advertiser users must be linked to an advertiser');
     if (role.scope === 'publisher' && !publisherId) throw AppError.badRequest('Publisher users must be linked to a publisher');
+    if (auth.scope.restricted) {
+      // Restricted actors (agencies, account managers) may only add partner users for partners they manage.
+      if (role.scope !== 'advertiser' && role.scope !== 'publisher') throw AppError.forbidden('You can only add users for advertisers or publishers you manage');
+      const linked = role.scope === 'advertiser' ? auth.scope.advertiserIds.includes(advertiserId ?? '') : auth.scope.publisherIds.includes(publisherId ?? '');
+      if (!linked) throw AppError.forbidden('You can only add users for advertisers or publishers you manage');
+    }
     if (advertiserId && !(await this.prisma.advertiser.findFirst({ where: { id: advertiserId, organizationId: auth.organizationId } }))) {
       throw AppError.badRequest('Unknown advertiser');
     }
@@ -157,6 +167,8 @@ export class UsersService {
       this.prisma.session.deleteMany({ where: { userId: member.userId } }),
     ]);
     await writeAudit(this.prisma, auth, meta, { action: 'member.password_reset', entityType: 'member', entityId: id });
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: member.userId }, select: { email: true } });
+    await notifyPasswordChanged(this.deps, user.email);
   }
 
   async remove(auth: OrgAuthContext, id: string, meta: RequestMeta) {

@@ -66,6 +66,12 @@ let publisherA2: string
 beforeAll(async () => {
   deps = createDeps(loadApiConfig({ ...process.env, NODE_ENV: 'test' }))
   app = createApp(deps)
+  // Every run comes from 127.0.0.1, so clear the account-link limiter counters left by earlier runs
+  // (the limits themselves stay in force within this run).
+  for (const prefix of ['acctoken', 'pwreset']) {
+    const keys = await deps.redis.keys(`ntrack:rl:${prefix}:*`)
+    if (keys.length) await deps.redis.del(...keys)
+  }
   await syncPermissionCatalogue(deps.prisma)
   orgA = (await provisionOrganization(deps.prisma, { name: `Org A ${run}`, slug: `it-a-${run}` })).id
   orgB = (await provisionOrganization(deps.prisma, { name: `Org B ${run}`, slug: `it-b-${run}` })).id
@@ -107,6 +113,7 @@ afterAll(async () => {
   await deps.prisma.campaign.deleteMany({ where: { organizationId: { in: orgIds } } })
   await deps.prisma.organization.deleteMany({ where: { id: { in: orgIds } } })
   await deps.prisma.notificationPreference.deleteMany({ where: { userId: { in: userIds } } })
+  await deps.prisma.user.deleteMany({ where: { email: { endsWith: `-${run}@it.test` } } })
   await deps.prisma.user.deleteMany({ where: { id: { in: userIds } } })
   await closeDeps(deps)
 })
@@ -491,5 +498,139 @@ describe('redirect response types', () => {
   it('rejects unknown redirect responses', async () => {
     const admin = await signIn(`admin-a-${run}@it.test`)
     expect((await admin.patch('/v1/organizations/current/settings', { redirectResponse: 'meta_refresh' })).status).toBe(400)
+  })
+})
+
+/** Finds the link in the most recent queued account email to `email` (emails are queued, not sent, in tests). */
+const linkFromEmail = async (email: string, path: string) => {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const jobs = await deps.emailQueue.getJobs(['waiting', 'delayed', 'active', 'completed', 'failed'], 0, 200)
+    const job = jobs.filter((j) => j?.data?.to === email && j.data.text.includes(path)).sort((a, b) => b.timestamp - a.timestamp)[0]
+    const token = job ? new URL(/https?:\/\/\S+/.exec(job.data.text.slice(job.data.text.indexOf(path) - 200))![0]).searchParams.get('token') : null
+    if (token) return token
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  throw new Error(`no ${path} email for ${email}`)
+}
+
+describe('invitations', () => {
+  const anonymous = async () => {
+    const agent = request.agent(app)
+    const token = (await agent.get('/v1/auth/csrf')).body.data.csrfToken as string
+    return { post: (url: string, body?: object) => agent.post(url).set('x-csrf-token', token).send(body) }
+  }
+
+  it('invites a new person, who sets a password, accepts once and can then sign in', async () => {
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    const analystRole = await deps.prisma.role.findUniqueOrThrow({ where: { organizationId_slug: { organizationId: orgA, slug: 'analyst' } } })
+    const email = `invitee-${run}@it.test`
+    const invite = await admin.post('/v1/users/invitations', { email, name: 'New Analyst', roleId: analystRole.id })
+    expect(invite.status).toBe(201)
+    expect(invite.body.data.inviteUrl).toContain('/accept-invite?token=')
+    expect(invite.body.data.invitation.tokenHash).toBeUndefined()
+    const token = new URL(invite.body.data.inviteUrl).searchParams.get('token')!
+
+    const pending = await admin.get('/v1/users/invitations')
+    expect(pending.body.data.map((i: { email: string }) => i.email)).toContain(email)
+
+    const visitor = await anonymous()
+    const lookup = await visitor.post('/v1/auth/invitations/lookup', { token })
+    expect(lookup.body.data).toMatchObject({ email, existingAccount: false, roleName: analystRole.name })
+    expect((await visitor.post('/v1/auth/invitations/accept', { token, name: 'New Analyst', password: 'short' })).status).toBe(400)
+    expect((await visitor.post('/v1/auth/invitations/accept', { token, name: 'New Analyst', password: 'InviteePass12345' })).status).toBe(200)
+    // Single use.
+    expect((await visitor.post('/v1/auth/invitations/accept', { token, name: 'Again', password: 'InviteePass12345' })).status).toBe(404)
+
+    const user = await deps.prisma.user.findUniqueOrThrow({ where: { email } })
+    userIds.push(user.id)
+    const login = await (async () => {
+      const agent = request.agent(app)
+      const csrf = (await agent.get('/v1/auth/csrf')).body.data.csrfToken as string
+      return agent.post('/v1/auth/login').set('x-csrf-token', csrf).send({ email, password: 'InviteePass12345' })
+    })()
+    expect(login.status).toBe(200)
+    expect(await deps.prisma.organizationMember.findUnique({ where: { organizationId_userId: { organizationId: orgA, userId: user.id } } })).toMatchObject({ roleId: analystRole.id })
+  })
+
+  it('makes old links stop working after resend or revoke', async () => {
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    const role = await deps.prisma.role.findUniqueOrThrow({ where: { organizationId_slug: { organizationId: orgA, slug: 'read_only' } } })
+    const first = await admin.post('/v1/users/invitations', { email: `resend-${run}@it.test`, roleId: role.id })
+    const firstToken = new URL(first.body.data.inviteUrl).searchParams.get('token')!
+    const resent = await admin.post(`/v1/users/invitations/${first.body.data.invitation.id}/resend`)
+    expect(resent.status).toBe(200)
+    const visitor = await anonymous()
+    expect((await visitor.post('/v1/auth/invitations/lookup', { token: firstToken })).status).toBe(404)
+    const newToken = new URL(resent.body.data.inviteUrl).searchParams.get('token')!
+    expect((await visitor.post('/v1/auth/invitations/lookup', { token: newToken })).status).toBe(200)
+    expect((await admin.post(`/v1/users/invitations/${first.body.data.invitation.id}/revoke`)).status).toBe(200)
+    expect((await visitor.post('/v1/auth/invitations/lookup', { token: newToken })).status).toBe(404)
+    // Revoking keeps the record for the audit trail.
+    expect(await deps.prisma.invitation.findUnique({ where: { id: first.body.data.invitation.id } })).toMatchObject({ revokedAt: expect.any(Date) })
+  })
+
+  it('asks existing NTrack users for their current password and refuses to re-invite members', async () => {
+    const adminA = await signIn(`admin-a-${run}@it.test`)
+    const role = await deps.prisma.role.findUniqueOrThrow({ where: { organizationId_slug: { organizationId: orgA, slug: 'read_only' } } })
+    expect((await adminA.post('/v1/users/invitations', { email: `analyst-a-${run}@it.test`, roleId: role.id })).status).toBe(409)
+
+    const invite = await adminA.post('/v1/users/invitations', { email: `admin-b-${run}@it.test`, roleId: role.id })
+    const token = new URL(invite.body.data.inviteUrl).searchParams.get('token')!
+    const visitor = await anonymous()
+    expect((await visitor.post('/v1/auth/invitations/lookup', { token })).body.data.existingAccount).toBe(true)
+    expect((await visitor.post('/v1/auth/invitations/accept', { token, name: 'B', password: 'WrongPassword123' })).status).toBe(400)
+    expect((await visitor.post('/v1/auth/invitations/accept', { token, name: 'B', password: PASSWORD })).status).toBe(200)
+    const userB = await deps.prisma.user.findUniqueOrThrow({ where: { email: `admin-b-${run}@it.test` } })
+    expect(await deps.prisma.organizationMember.findUnique({ where: { organizationId_userId: { organizationId: orgA, userId: userB.id } } })).not.toBeNull()
+  })
+
+  it('stops restricted user managers from inviting users for partners they do not manage (regression)', async () => {
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    // The manager must hold every permission of the role it grants (no escalation), plus users.manage.
+    const publisherPermissions = (
+      await deps.prisma.rolePermission.findMany({ where: { role: { organizationId: orgA, slug: 'publisher' } }, select: { permissionKey: true } })
+    ).map((p) => p.permissionKey)
+    const managerRole = await admin.post('/v1/roles', { name: `IT Partner Manager ${run}`, scope: 'managed', permissions: [...new Set([...publisherPermissions, 'users.view', 'users.manage'])] })
+    expect(managerRole.status).toBe(201)
+    const manager = await createUser(orgA, managerRole.body.data.slug, `manager-${run}@it.test`)
+    await deps.prisma.managerAssignment.create({ data: { organizationId: orgA, userId: manager.id, publisherId: publisherA1 } })
+    const publisherRole = await deps.prisma.role.findUniqueOrThrow({ where: { organizationId_slug: { organizationId: orgA, slug: 'publisher' } } })
+    const managerClient = await signIn(`manager-${run}@it.test`)
+    expect((await managerClient.post('/v1/users/invitations', { email: `p2-user-${run}@it.test`, roleId: publisherRole.id, publisherId: publisherA2 })).status).toBe(403)
+    expect((await managerClient.post('/v1/users/invitations', { email: `p1-user-${run}@it.test`, roleId: publisherRole.id, publisherId: publisherA1 })).status).toBe(201)
+  })
+})
+
+describe('password reset', () => {
+  const anonymous = async () => {
+    const agent = request.agent(app)
+    const token = (await agent.get('/v1/auth/csrf')).body.data.csrfToken as string
+    return { post: (url: string, body?: object) => agent.post(url).set('x-csrf-token', token).send(body) }
+  }
+
+  it('answers the same for unknown and known emails, and resets with a single-use link', async () => {
+    const email = `reset-${run}@it.test`
+    const user = await createUser(orgA, 'read_only', email)
+    const visitor = await anonymous()
+    const unknown = await visitor.post('/v1/auth/password/forgot', { email: `nobody-${run}@it.test` })
+    const known = await visitor.post('/v1/auth/password/forgot', { email })
+    expect(unknown.status).toBe(200)
+    expect(known.status).toBe(200)
+    expect(unknown.body.message).toBe(known.body.message)
+
+    // An existing session must be signed out by the reset.
+    const session = await signIn(email)
+    expect((await session.get('/v1/auth/me')).status).toBe(200)
+
+    const token = await linkFromEmail(email, '/reset-password')
+    expect((await visitor.post('/v1/auth/password/reset', { token, password: 'weak' })).status).toBe(400)
+    expect((await visitor.post('/v1/auth/password/reset', { token, password: 'BrandNewPass12345' })).status).toBe(200)
+    expect((await visitor.post('/v1/auth/password/reset', { token, password: 'AnotherPass12345' })).status).toBe(400)
+    expect((await session.get('/v1/auth/me')).status).toBe(401)
+    const fresh = request.agent(app)
+    const csrf = (await fresh.get('/v1/auth/csrf')).body.data.csrfToken as string
+    expect((await fresh.post('/v1/auth/login').set('x-csrf-token', csrf).send({ email, password: PASSWORD })).status).toBe(401)
+    expect((await fresh.post('/v1/auth/login').set('x-csrf-token', csrf).send({ email, password: 'BrandNewPass12345' })).status).toBe(200)
+    expect(user.id).toBeTruthy()
   })
 })

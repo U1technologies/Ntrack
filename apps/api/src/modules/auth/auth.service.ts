@@ -5,6 +5,7 @@ import { burnPasswordCheck, hashPassword, verifyPassword } from '../../lib/passw
 import { generateTotpSecret, totpQrCode, verifyTotp } from '../../lib/totp';
 import { writeAudit } from '../../services/audit';
 import type { AppDeps, AuthContext, RequestMeta } from '../../types';
+import { notifyPasswordChanged } from './password-reset.service';
 
 const MAX_FAILED_LOGINS = 10;
 const LOCKOUT_MINUTES = 15;
@@ -150,5 +151,6 @@ export class AuthService {
       this.prisma.session.deleteMany({ where: { userId: user.id, id: { not: auth.sessionId } } }),
     ]);
     await writeAudit(this.prisma, auth, meta, { action: 'auth.password_changed', entityType: 'user', entityId: user.id });
+    await notifyPasswordChanged(this.deps, user.email);
   }
 }

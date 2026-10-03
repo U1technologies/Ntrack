@@ -16,6 +16,11 @@ const EnvSchema = z.object({
   CLICKHOUSE_USER: z.string().default('default'),
   CLICKHOUSE_PASSWORD: z.string().default(''),
   CONSOLE_ORIGIN: z.string().url(),
+  /** Path the console is served under on CONSOLE_ORIGIN; '' when it has its own domain (e.g. app.example.com). */
+  CONSOLE_BASE_PATH: z
+    .string()
+    .regex(/^(\/[a-z0-9-]+)*$/, 'Use a path like /ntrack, or empty')
+    .default('/ntrack'),
   COOKIE_SECURE: z
     .enum(['true', 'false'])
     .default('false')

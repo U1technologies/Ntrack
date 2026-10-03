@@ -29,6 +29,17 @@ curl -c jar -b jar -H "X-CSRF-Token: <token>" -H "Content-Type: application/json
   -d '{"email":"you@nextagmedia.com","password":"…"}' https://nextagmedia.com/ntrack/api/auth/login
 ```
 
+## Account recovery and invitations (public, rate limited)
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/auth/password/forgot` | `{ email }`. Always the same answer, whether or not the email has an account. 5 per hour per IP and email |
+| POST | `/auth/password/reset` | `{ token, password }`. Single use, 30 minutes; signs the user out everywhere and emails a "password changed" notice |
+| POST | `/auth/invitations/lookup` | `{ token }` → organization, role, email, `existingAccount` |
+| POST | `/auth/invitations/accept` | `{ token, name, password }`. New users choose a password; existing users confirm their current one. Never signs in; the user signs in normally (MFA applies) |
+
+Tokens are sent in the request body so they never appear in access logs; only SHA-256 hashes are stored.
+
 ## Organization and access
 
 | Method | Path | Permission |
@@ -41,6 +52,8 @@ curl -c jar -b jar -H "X-CSRF-Token: <token>" -H "Content-Type: application/json
 | PUT | `/users/:id/assignments` | users.manage — `{ advertiserIds, publisherIds }` for managed roles |
 | POST | `/users/:id/reset-password` | users.manage |
 | GET | `/audit-logs?entityType=&entityId=&action=&actor=&from=&to=` | audit.view |
+
+Invitations (`users.manage`; restricted managers only for partners they manage): `GET /users/invitations`, `POST /users/invitations { email, name?, roleId, advertiserId?, publisherId? }` → `{ invitation, inviteUrl, emailSent }` (the link is returned once so it can be shared while email is off), `POST /users/invitations/:id/resend`, `POST /users/invitations/:id/revoke` (kept for the audit trail).
 
 ## Partners
 

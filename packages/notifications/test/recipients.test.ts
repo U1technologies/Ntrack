@@ -58,3 +58,17 @@ describe('renderNotificationEmail', () => {
     expect(email.html).toContain('&lt;script&gt;');
   });
 });
+
+describe('account emails', () => {
+  it('escapes organization and inviter names and keeps subjects on one line', async () => {
+    const { renderInvitationEmail, renderPasswordResetEmail } = await import('../src');
+    const email = renderInvitationEmail({ organizationName: 'Acme <b>Ltd</b>\nBcc: x@y.z', inviterName: '<script>alert(1)</script>', roleName: 'Analyst', url: 'https://example.com/ntrack/accept-invite?token=a&b', expiresInDays: 7 });
+    expect(email.subject).not.toMatch(/[\r\n]/);
+    expect(email.html).not.toContain('<script>');
+    expect(email.html).toContain('&lt;script&gt;');
+    expect(email.html).toContain('href="https://example.com/ntrack/accept-invite?token=a&amp;b"');
+    expect(email.text).toContain('https://example.com/ntrack/accept-invite?token=a&b');
+    const reset = renderPasswordResetEmail({ url: 'https://example.com/ntrack/reset-password?token=x', expiresInMinutes: 30 });
+    expect(reset.text).toContain('30 minutes');
+  });
+});

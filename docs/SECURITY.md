@@ -17,6 +17,14 @@
 - SQL injection: Prisma parameterised queries; ClickHouse queries use whitelisted columns and bound parameters only.
 - Rate limits: 600 req/min per IP on the API, 10/15 min on login and MFA, 20/min on network tools; Redis-backed for multiple replicas.
 
+## Invitations and password reset
+
+- Invitation (7 days) and reset (30 minutes) tokens are 256-bit random, stored as SHA-256 only, single use (claimed atomically), and sent to the API in request bodies, not URLs.
+- The forgot-password endpoint answers identically for unknown emails; requests are rate limited per IP and email, token use per IP.
+- A pending invitation grants nothing; the membership is created on acceptance. Existing users must confirm their current password to accept. Accepting never creates a session, so MFA still applies at sign-in.
+- Every password change (self-service, reset link, admin reset) signs out other sessions and emails a notice.
+- Restricted managers can only add users for advertisers or publishers in their own scope, and never with more permissions than they hold.
+
 ## Authorization
 
 - Permissions are `module.action` keys checked by `requirePermission` on every route.
@@ -48,7 +56,7 @@
 ## Known gaps (tracked in ROADMAP.md)
 
 - PostgreSQL row-level security as a second isolation layer (isolation is currently enforced in the service layer and tested).
-- Password reset by email and invitation emails (the SMTP sender exists; the flows still need building once a provider is chosen).
+- Email delivery needs a provider (SMTP). Invitations and password reset are built; until SMTP is configured, admins share invitation links manually and self-service reset emails are not delivered.
 - Spreadsheet exports neutralize formula-like cells (`= + - @`). `exceljs` pulls in a `uuid` version with a moderate advisory that does not affect how exceljs uses it; Prisma CLI tooling carries high-severity advisories in `deepmerge-ts` (build-time only). Re-check `npm audit` before launch.
 - API keys / OAuth for partner integrations (Phase 4).
 - Penetration test before commercial launch.

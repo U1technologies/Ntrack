@@ -25,3 +25,53 @@ export const renderReportEmail = (input: { reportName: string; rangeLabel: strin
 <p style="font-size:12px;color:#6b7280">${escapeHtml(FOOTER)}</p></body></html>`;
   return { subject, text, html };
 };
+
+/**
+ * Account emails (invitations, password reset). Same escaping rules as notifications; the button
+ * link is the only URL and it is always built by the API from the configured console origin.
+ */
+const ACCOUNT_FOOTER = 'This is an account email from NTrack by Nextagmedia. If you did not expect it, you can ignore it; nothing changes unless you use the link.';
+
+const renderAccountEmail = (input: { subject: string; heading: string; paragraphs: string[]; button?: { label: string; url: string } }) => {
+  const subject = `[NTrack] ${input.subject}`.replace(/[\r\n]+/g, ' ').slice(0, 200);
+  const text = [input.heading, '', ...input.paragraphs, input.button ? `\n${input.button.label}: ${input.button.url}` : '', '', '--', ACCOUNT_FOOTER].join('\n');
+  const html = `<!doctype html><html><body style="font-family:Arial,Helvetica,sans-serif;color:#1f2937;line-height:1.5">
+<h2 style="font-size:18px;margin:0 0 12px">${escapeHtml(input.heading)}</h2>
+${input.paragraphs.map((p) => `<p>${escapeHtml(p)}</p>`).join('\n')}
+${input.button ? `<p><a href="${escapeHtml(input.button.url)}" style="display:inline-block;padding:10px 16px;border-radius:8px;background:#4f46e5;color:#ffffff;text-decoration:none;font-weight:600">${escapeHtml(input.button.label)}</a></p><p style="font-size:12px;color:#6b7280;word-break:break-all">${escapeHtml(input.button.url)}</p>` : ''}
+<hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0 8px"><p style="font-size:12px;color:#6b7280">${escapeHtml(ACCOUNT_FOOTER)}</p>
+</body></html>`;
+  return { subject, text, html };
+};
+
+export const renderInvitationEmail = (input: { organizationName: string; inviterName: string; roleName: string; url: string; expiresInDays: number }) =>
+  renderAccountEmail({
+    subject: `You are invited to ${input.organizationName}`,
+    heading: `Join ${input.organizationName} on NTrack`,
+    paragraphs: [
+      `${input.inviterName} invited you to ${input.organizationName} as ${input.roleName}.`,
+      `The link works once and expires in ${input.expiresInDays} days.`,
+    ],
+    button: { label: 'Accept invitation', url: input.url },
+  });
+
+export const renderPasswordResetEmail = (input: { url: string; expiresInMinutes: number }) =>
+  renderAccountEmail({
+    subject: 'Reset your password',
+    heading: 'Reset your NTrack password',
+    paragraphs: [
+      'Someone asked to reset the password for this email address. If it was you, use the button below.',
+      `The link works once and expires in ${input.expiresInMinutes} minutes. If you did not ask for this, ignore this email; your password stays the same.`,
+    ],
+    button: { label: 'Choose a new password', url: input.url },
+  });
+
+export const renderPasswordChangedEmail = (input: { when: string }) =>
+  renderAccountEmail({
+    subject: 'Your password was changed',
+    heading: 'Your NTrack password was changed',
+    paragraphs: [
+      `The password for this account was changed on ${input.when} (UTC). Other signed-in sessions were signed out.`,
+      'If you did not do this, reset your password now and tell your NTrack administrator.',
+    ],
+  });

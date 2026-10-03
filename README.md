@@ -53,6 +53,7 @@ Then run the website (`NTRACK_API_URL=http://localhost:4000 npm run dev` in the 
 | `CLICKHOUSE_URL`, `CLICKHOUSE_DATABASE`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD` | api, workers | Analytics store |
 | `API_PORT` | api | Default 4000 |
 | `CONSOLE_ORIGIN` | api | Exact origin of the console (e.g. `https://nextagmedia.com`). Requests with any other `Origin` are rejected |
+| `CONSOLE_BASE_PATH` | api | Path of the console on that origin, default `/ntrack`; empty when the console has its own domain. Used for links in emails |
 | `COOKIE_SECURE` | api | Must be `true` in production (enforced) |
 | `COOKIE_PATH` | api | `/ntrack` in production so cookies only reach the console |
 | `SESSION_TTL_HOURS` | api | Absolute session lifetime, default 12 |

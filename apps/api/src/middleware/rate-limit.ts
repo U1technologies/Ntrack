@@ -29,3 +29,19 @@ export const loginRateLimit = (deps: AppDeps) =>
 
 export const toolRateLimit = (deps: AppDeps) =>
   rateLimit({ windowMs: 60_000, limit: 20, standardHeaders: 'draft-8', legacyHeaders: false, store: store(deps, 'tools'), handler });
+
+/** Forgot-password requests: per IP and email, so one address cannot be flooded with emails. */
+export const passwordResetRequestLimit = (deps: AppDeps) =>
+  rateLimit({
+    windowMs: 60 * 60_000,
+    limit: 5,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    store: store(deps, 'pwreset'),
+    handler,
+    keyGenerator: (req) => `${ipKeyGenerator(req.ip ?? '')}:${String(req.body?.email ?? '').toLowerCase().slice(0, 254)}`,
+  });
+
+/** Using invitation and reset links (token guessing protection; tokens are 256-bit anyway). */
+export const accountTokenLimit = (deps: AppDeps) =>
+  rateLimit({ windowMs: 15 * 60_000, limit: 30, standardHeaders: 'draft-8', legacyHeaders: false, store: store(deps, 'acctoken'), handler, keyGenerator: (req) => ipKeyGenerator(req.ip ?? '') });

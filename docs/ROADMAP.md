@@ -65,6 +65,15 @@ Phase 2 gaps: mobile measurement partner (MMP) callback presets (works today thr
 
 Phase 3 gaps: PDF export (CSV and Excel are available), automatic FX rates (rates are entered manually), payment provider payouts (payouts are recorded, not sent), search/travel record-level listing and delete endpoints, HotelZoff spec confirmation.
 
+## Platform essentials (priority 1) — in progress
+
+| Area | Status |
+|---|---|
+| Email invitations (accept flow, resend, revoke, copyable link while email is off) and self-service password reset | Built |
+| Data export and deletion requests | Planned next |
+| Public API keys with permissions, usage limits and API logs | Planned |
+| PostgreSQL row-level security | Planned |
+
 ## Phase 4: SaaS
 
 - Public API keys / OAuth, usage limits, API logs
