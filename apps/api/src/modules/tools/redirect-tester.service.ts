@@ -249,7 +249,7 @@ export class RedirectTesterService {
     const domain = await this.deps.prisma.trackingDomain.findFirst({ where: { organizationId: auth.organizationId, hostname: host } });
     if (!domain) throw AppError.badRequest('The tracking URL must use one of your organization\'s tracking domains');
 
-    const slug = /^\/c\/([0-9A-Za-z]{6,32})\/?$/.exec(tracking.pathname)?.[1] ?? null;
+    const slug = /^\/(?:click|c)\/([0-9A-Za-z]{6,32})\/?$/.exec(tracking.pathname)?.[1] ?? null;
     const config = await this.configurationFor(auth, domain.id, slug, input.destinationParam);
     const transparent = config.redirectMode === 'transparent' || (!config.found && tracking.searchParams.has(config.destinationParam));
 
@@ -257,7 +257,7 @@ export class RedirectTesterService {
     const add = (id: string, label: string, status: CheckStatus, detail: string) => checks.push({ id, label, status, detail });
 
     // 1. Tracking URL format and configuration
-    add('url_format', 'Tracking URL format', slug ? 'pass' : 'warn', slug ? 'Matches https://<domain>/c/<link>.' : `Unexpected path "${tracking.pathname}".`);
+    add('url_format', 'Tracking URL format', slug ? 'pass' : 'warn', slug ? 'Matches https://<domain>/click/<link>.' : `Unexpected path "${tracking.pathname}".`);
     add(
       'configuration',
       'Configured redirect type',

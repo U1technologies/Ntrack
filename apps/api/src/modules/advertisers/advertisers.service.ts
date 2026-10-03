@@ -97,10 +97,10 @@ export class AdvertisersService {
     return {
       domain: domain?.hostname ?? null,
       token,
-      s2sUrl: base && token ? `${base}/pb?click_id={click_id}&token=${token}&event=sale&txn_id={order_id}&amount={order_total}&currency=USD` : null,
-      pixelHtml: base ? `<img src="${base}/px?event=sale&txn_id={order_id}&amount={order_total}" width="1" height="1" alt="" style="display:none" referrerpolicy="no-referrer">` : null,
+      s2sUrl: base && token ? `${base}/postback?click_id={click_id}&token=${token}&event=sale&txn_id={order_id}&amount={order_total}&currency=USD` : null,
+      pixelHtml: base ? `<img src="${base}/pixel?event=sale&txn_id={order_id}&amount={order_total}" width="1" height="1" alt="" style="display:none" referrerpolicy="no-referrer">` : null,
       javascript: base
-        ? `<script src="${base}/js/ntrack.js" async></script>\n<script>\n  // On the thank-you page, after the script loads:\n  window.ntrack && window.ntrack.convert({ event: 'sale', txn_id: 'ORDER_ID', amount: '49.90', currency: 'USD' });\n</script>`
+        ? `<script src="${base}/ntrack.js" async></script>\n<script>\n  // On the thank-you page, after the script loads:\n  window.ntrack && window.ntrack.convert({ event: 'sale', txn_id: 'ORDER_ID', amount: '49.90', currency: 'USD' });\n</script>`
         : null,
       notes: [
         'Pass the NTrack click ID to your site: add {click_id} to the landing page URL (e.g. ?aff_click={click_id}) and store it with the order.',

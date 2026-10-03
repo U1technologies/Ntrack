@@ -3,10 +3,12 @@
 ## Tracking links
 
 ```
-https://<tracking-domain>/c/<slug>?sub1=…&sub2=…&source=…&lp=<landing-page-id>&dl=<deep-link>
+https://<tracking-domain>/click/<slug>?sub1=…&sub2=…&source=…&lp=<landing-page-id>&dl=<deep-link>
 ```
 
 - `<slug>` is a random 10-character token. Internal IDs never appear in URLs.
+- Nextagmedia's own tracking domain is `trk.nextagmedia.com` (DNS on Hostinger, pointing directly at the tracker, not through the website).
+- Public paths: `/click/<slug>`, `/postback`, `/pixel`, `/ntrack.js`. The short forms `/c/<slug>`, `/pb`, `/px` and `/js/ntrack.js` keep working for links and snippets created earlier.
 - A link only works on the domain it was generated for (domain and tenant isolation).
 - Parameter names are configurable per organization (Settings → Tracking & privacy). Defaults: `sub1`–`sub5`, `source`, `ext_click_id`, `lp`, `dl`.
 - Sub IDs saved on the link win over URL parameters, so a shared link cannot be re-attributed by editing it.
@@ -23,7 +25,7 @@ The visitor goes to the campaign landing page (the link's page, a valid `?lp=` c
 Tracking template for the ad platform:
 
 ```
-https://click.brand.com/c/<slug>?url={lpurl}
+https://trk.nextagmedia.com/click/<slug>?url={lpurl}
 ```
 
 The tracker redirects to **exactly** the URL in the destination parameter (`url` by default), after checking it is HTTPS and on the campaign's allowed hosts. It never substitutes another destination:
@@ -82,9 +84,9 @@ Unique clicks: first click per visitor and link within the unique window (defaul
 
 | Method | How | Notes |
 |---|---|---|
-| Server-to-server (recommended) | Advertiser calls `https://<domain>/pb?click_id=…&token=…&event=sale&txn_id=…&amount=…&currency=USD` | Token per advertiser (Advertiser → Conversion tracking). POST form/JSON also accepted |
-| Pixel | `<img src="https://<domain>/px?event=sale&txn_id=…">` on the thank-you page | Needs `click_id` in the URL or the click cookie (Settings → Tracking & privacy, off by default) |
-| JavaScript | `<script src="https://<domain>/js/ntrack.js">` then `ntrack.convert({...})` | Stores the click ID from `?ntclid=`, `?click_id=` or `?aff_click=` on landing |
+| Server-to-server (recommended) | Advertiser calls `https://<domain>/postback?click_id=…&token=…&event=sale&txn_id=…&amount=…&currency=USD` | Token per advertiser (Advertiser → Conversion tracking). POST form/JSON also accepted |
+| Pixel | `<img src="https://<domain>/pixel?event=sale&txn_id=…">` on the thank-you page | Needs `click_id` in the URL or the click cookie (Settings → Tracking & privacy, off by default) |
+| JavaScript | `<script src="https://<domain>/ntrack.js">` then `ntrack.convert({...})` | Stores the click ID from `?ntclid=`, `?click_id=` or `?aff_click=` on landing |
 | Manual / API | Console or `POST /v1/conversions` | Same checks as postbacks |
 
 Processing: the tracker validates and queues; workers check the click exists and is inside the attribution window, deduplicate (transaction ID, or click + event), apply the daily conversion cap, resolve payout/revenue from tiers, compute attribution credits, store the conversion with an event trail, mirror it to ClickHouse and queue postbacks. Conversions from clicks flagged invalid are kept pending for review. Campaigns can auto-approve conversions from valid clicks.

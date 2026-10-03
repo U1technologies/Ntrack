@@ -19,7 +19,7 @@ type LinkWithRelations = Prisma.TrackingLinkGetPayload<{ include: typeof linkInc
 
 /** The URL publishers share. Transparent-mode links include the destination parameter for ad platforms (e.g. Google's {lpurl}). */
 export const buildTrackingUrl = (link: Pick<TrackingLink, 'slug'>, hostname: string, campaign: { redirectMode: string; destinationParam: string }) => {
-  const base = `https://${hostname}/c/${link.slug}`;
+  const base = `https://${hostname}/click/${link.slug}`;
   return campaign.redirectMode === 'transparent' ? `${base}?${campaign.destinationParam}={lpurl}` : base;
 };
 

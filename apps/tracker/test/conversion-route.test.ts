@@ -59,6 +59,18 @@ describe('conversion intake', () => {
     expect(store.conversions[0]).toMatchObject({ source: 's2s', clickId: CLICK, event: 'lead', transactionId: 'ORD-1', saleAmount: '49.90', currency: 'USD', customParams: { plan: 'pro' } });
   });
 
+  it('serves the documented public paths (/postback, /pixel, /ntrack.js) like the short ones', async () => {
+    expect((await app.inject({ method: 'GET', url: `/postback?click_id=${CLICK}&token=${TOKEN}&event=sale&txn_id=ORD-P` })).statusCode).toBe(202);
+    expect((await app.inject({ method: 'POST', url: '/postback', headers: { 'content-type': 'application/json' }, payload: { click_id: CLICK, token: TOKEN, event: 'lead' } })).statusCode).toBe(202);
+    const pixel = await app.inject({ method: 'GET', url: `/pixel?click_id=${CLICK}&event=sale&txn_id=ORD-X` });
+    expect(pixel.headers['content-type']).toBe('image/gif');
+    const script = await app.inject({ method: 'GET', url: '/ntrack.js', headers: { host: 'trk.example.com' } });
+    expect(script.statusCode).toBe(200);
+    expect(script.body).toContain("'https://trk.example.com/pixel?'");
+    expect((await app.inject({ method: 'GET', url: '/js/ntrack.js', headers: { host: 'trk.example.com' } })).body).toBe(script.body);
+    expect(store.conversions.map((c) => c.source)).toEqual(['s2s', 's2s', 'pixel']);
+  });
+
   it('accepts form-encoded POST postbacks', async () => {
     const response = await app.inject({
       method: 'POST',

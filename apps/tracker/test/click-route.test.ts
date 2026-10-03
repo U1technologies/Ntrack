@@ -41,6 +41,13 @@ describe('GET /c/:slug', () => {
     expect(store.contexts.get(event!.clickId)).toBeDefined();
   });
 
+  it('serves /click/:slug exactly like the short /c/:slug path', async () => {
+    const response = await click('/click/AbCdEf1234?sub1=ads')
+    expect(response.statusCode).toBe(302)
+    expect(response.headers.location).toMatch(/^https:\/\/brand\.com\/offer\?aff=[0-9A-Z]{26}&s1=ads$/)
+    expect((await click('/click/!!bad')).statusCode).toBe(404)
+  })
+
   it('returns 404 for a link served from a different tenant domain', async () => {
     store.domains.set('other.example.com', makeDomain({ domainId: '99999999-9999-4999-8999-999999999999', hostname: 'other.example.com' }));
     const response = await click('/c/AbCdEf1234', { host: 'other.example.com' });

@@ -46,7 +46,7 @@ export type PublicIdPrefix = 'org' | 'adv' | 'pub' | 'cmp' | 'lnk' | 'lp' | 'dom
 /** Public IDs are what appear in URLs, exports and macros; database UUIDs never leave the API. */
 export const generatePublicId = (prefix: PublicIdPrefix, length = 10): string => `${prefix}_${randomString(BASE62, length)}`;
 
-/** Short, unguessable path segment for tracking links (`/c/{slug}`). */
+/** Short, unguessable path segment for tracking links (`/click/{slug}`). */
 export const generateLinkSlug = (length = 10): string => randomString(BASE62, length);
 
 /** URL-safe secret for sessions, API keys, verification tokens. */

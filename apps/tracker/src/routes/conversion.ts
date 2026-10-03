@@ -9,9 +9,11 @@ import { CLICK_COOKIE } from './click';
  * database work (dedup, payout, attribution, postbacks) so intake stays fast and survives
  * PostgreSQL hiccups.
  *
- *   GET|POST /pb   server-to-server postback, authenticated by the advertiser's postback token
- *   GET      /px   1x1 pixel (click_id parameter or first-party click cookie)
- *   GET      /js/ntrack.js  small script that stores the click ID on landing and fires the pixel
+ *   GET|POST /postback (also /pb)   server-to-server postback, authenticated by the advertiser's postback token
+ *   GET      /pixel (also /px)      1x1 pixel (click_id parameter or first-party click cookie)
+ *   GET      /ntrack.js (also /js/ntrack.js)  small script that stores the click ID on landing and fires the pixel
+ *
+ * The short paths stay available so snippets already installed by advertisers keep working.
  */
 
 const RESERVED = new Set(['click_id', 'clickid', 'token', 'event', 'goal', 'txn_id', 'transaction_id', 'order_id', 'amount', 'sale_amount', 'currency']);
@@ -94,12 +96,14 @@ export const registerConversionRoutes = (app: FastifyInstance, store: TrackerSto
     return reply.code(202).header('Cache-Control', 'no-store').send({ status: 'accepted', click_id: clickId });
   };
 
-  app.get('/pb', { logLevel: 'warn' }, handlePostback);
-  app.post('/pb', { logLevel: 'warn' }, handlePostback);
+  for (const path of ['/postback', '/pb']) {
+    app.get(path, { logLevel: 'warn' }, handlePostback);
+    app.post(path, { logLevel: 'warn' }, handlePostback);
+  }
 
   // Pixels always answer with the GIF so a broken setup never breaks the advertiser's page;
   // rejected conversions are visible in logs and the console instead.
-  app.get('/px', { logLevel: 'warn' }, async (request, reply) => {
+  const handlePixel = async (request: FastifyRequest, reply: FastifyReply) => {
     const params = firstValues(request.query);
     const clickId = (params.click_id ?? params.clickid ?? readCookie(request, CLICK_COOKIE)).toUpperCase();
     if (isClickId(clickId) && (await store.getClickContext(clickId))) {
@@ -113,12 +117,14 @@ export const registerConversionRoutes = (app: FastifyInstance, store: TrackerSto
       .header('Cache-Control', 'no-store, max-age=0')
       .header('Cross-Origin-Resource-Policy', 'cross-origin')
       .send(GIF);
-  });
+  };
+  for (const path of ['/pixel', '/px']) app.get(path, { logLevel: 'warn' }, handlePixel);
 
-  app.get('/js/ntrack.js', async (request, reply) => {
+  const handleScript = async (request: FastifyRequest, reply: FastifyReply) => {
     const origin = `https://${request.hostname}`;
     return reply.header('Content-Type', 'application/javascript; charset=utf-8').header('Cache-Control', 'public, max-age=3600').send(trackingScript(origin));
-  });
+  };
+  for (const path of ['/ntrack.js', '/js/ntrack.js']) app.get(path, handleScript);
 };
 
 /**
@@ -139,7 +145,7 @@ const trackingScript = (origin: string) => `/* NTrack by Nextagmedia conversion 
       var q = new URLSearchParams({ src: 'js' });
       var id = this.clickId(); if (id) q.set('click_id', id);
       ['event', 'txn_id', 'amount', 'currency'].forEach(function (k) { if (data[k] != null) q.set(k, String(data[k])); });
-      var img = new Image(1, 1); img.referrerPolicy = 'no-referrer'; img.src = '${origin}/px?' + q.toString();
+      var img = new Image(1, 1); img.referrerPolicy = 'no-referrer'; img.src = '${origin}/pixel?' + q.toString();
     }
   };
 })(window);

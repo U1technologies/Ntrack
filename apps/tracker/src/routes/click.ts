@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   classifyUserAgent,
   detectBrowser,
@@ -33,9 +33,11 @@ const sendError = (reply: FastifyReply, status: number) =>
     .type('text/html; charset=utf-8')
     .send(errorPage(status));
 
+/** Public click paths: `/click/:slug` is the documented one; `/c/:slug` keeps earlier links working. */
+export const CLICK_PATHS = ['/click/:slug', '/c/:slug'] as const;
+
 export const registerClickRoutes = (app: FastifyInstance, store: TrackerStore, config: TrackerConfig, datacenter: DatacenterMatcher) => {
-  // Per-request access logs are off for the click route (volume); errors are still logged.
-  app.get<{ Params: { slug: string } }>('/c/:slug', { logLevel: 'error' }, async (request, reply) => {
+  const handleClick = async (request: FastifyRequest<{ Params: { slug: string } }>, reply: FastifyReply) => {
     const startedAt = performance.now();
     const { slug } = request.params;
     if (!SLUG_PATTERN.test(slug)) return sendError(reply, 404);
@@ -187,5 +189,8 @@ export const registerClickRoutes = (app: FastifyInstance, store: TrackerStore, c
       return reply.code(200).header('Content-Security-Policy', page.csp).type('text/html; charset=utf-8').send(page.html);
     }
     return reply.code(302).header('Location', decision.location).send();
-  });
+  };
+
+  // Per-request access logs are off for the click route (volume); errors are still logged.
+  for (const path of CLICK_PATHS) app.get<{ Params: { slug: string } }>(path, { logLevel: 'error' }, handleClick);
 };

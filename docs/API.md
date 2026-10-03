@@ -232,11 +232,14 @@ Redirect types: `PATCH /organizations/current/settings { redirectResponse: redir
 
 ## Tracker (public)
 
+Short aliases `/c/:slug`, `/pb`, `/px` and `/js/ntrack.js` remain available for links and snippets created before the public paths.
+
+
 | Method | Path | |
 |---|---|---|
-| GET/HEAD | `/c/:slug` | Click redirect (HEAD is answered but not recorded) |
-| GET/POST | `/pb?click_id=&token=&event=&txn_id=&amount=&currency=` | S2S conversion postback → `202 accepted` / `401 invalid_token` / `404 unknown_or_expired_click` |
-| GET | `/px?click_id=&event=&txn_id=&amount=` | Conversion pixel (always returns a 1×1 GIF) |
-| GET | `/js/ntrack.js` | JavaScript conversion tag (`ntrack.convert({...})`) |
+| GET/HEAD | `/click/:slug` (also `/c/:slug`) | Click redirect (HEAD is answered but not recorded) |
+| GET/POST | `/postback?click_id=&token=&event=&txn_id=&amount=&currency=` | S2S conversion postback → `202 accepted` / `401 invalid_token` / `404 unknown_or_expired_click` |
+| GET | `/pixel?click_id=&event=&txn_id=&amount=` | Conversion pixel (always returns a 1×1 GIF) |
+| GET | `/ntrack.js` | JavaScript conversion tag (`ntrack.convert({...})`) |
 | GET | `/health`, `/ready` | Liveness / Redis readiness |
 | GET | `/.well-known/ntrack` | Lets domain health checks confirm routing |
