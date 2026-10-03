@@ -1,0 +1,405 @@
+/**
+ * Integration tests for tenant isolation, data-level scopes and request security. They run the
+ * real Express app against real PostgreSQL/Redis (see vitest.integration.config.ts) and create
+ * their own throwaway organizations, so they can run against a development database.
+ */
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import request from 'supertest'
+import type { Express } from 'express'
+import { REDIS_KEYS, generateClickId, generateSecretToken, type ClickContext } from '@ntrack/shared'
+import { createApp } from '../../src/app'
+import { loadApiConfig } from '../../src/config/env'
+import { closeDeps, createDeps } from '../../src/deps'
+import { hashPassword } from '../../src/lib/password'
+import { provisionOrganization, syncPermissionCatalogue } from '../../src/services/provisioning'
+import type { AppDeps } from '../../src/types'
+
+const run = generateSecretToken(4).toLowerCase().replace(/[^a-z0-9]/g, 'x')
+const PASSWORD = 'IntegrationPass123'
+
+let deps: AppDeps
+let app: Express
+const orgIds: string[] = []
+const userIds: string[] = []
+
+/** A signed-in client with its own cookie jar and CSRF token. */
+const signIn = async (email: string) => {
+  const agent = request.agent(app)
+  const csrf = await agent.get('/v1/auth/csrf')
+  let token = csrf.body.data.csrfToken as string
+  const login = await agent.post('/v1/auth/login').set('x-csrf-token', token).send({ email, password: PASSWORD })
+  expect(login.status).toBe(200)
+  token = /ntrack_csrf=([^;]+)/.exec((login.headers['set-cookie'] as unknown as string[]).join(';'))?.[1] ?? token
+  return {
+    get: (url: string) => agent.get(url),
+    post: (url: string, body?: object) => agent.post(url).set('x-csrf-token', token).send(body),
+    patch: (url: string, body?: object) => agent.patch(url).set('x-csrf-token', token).send(body),
+    put: (url: string, body?: object) => agent.put(url).set('x-csrf-token', token).send(body),
+    rawPost: (url: string, body?: object) => agent.post(url).send(body),
+  }
+}
+
+const createUser = async (organizationId: string, roleSlug: string, email: string, link: { advertiserId?: string; publisherId?: string } = {}) => {
+  const role = await deps.prisma.role.findUniqueOrThrow({ where: { organizationId_slug: { organizationId, slug: roleSlug } } })
+  const user = await deps.prisma.user.create({ data: { email, name: email, passwordHash: await hashPassword(PASSWORD) } })
+  userIds.push(user.id)
+  await deps.prisma.organizationMember.create({ data: { organizationId, userId: user.id, roleId: role.id, ...link } })
+  return user
+}
+
+let orgA: string
+let orgB: string
+let campaignA: string
+let advertiserA: string
+let publisherA1: string
+let publisherA2: string
+
+beforeAll(async () => {
+  deps = createDeps(loadApiConfig({ ...process.env, NODE_ENV: 'test' }))
+  app = createApp(deps)
+  await syncPermissionCatalogue(deps.prisma)
+  orgA = (await provisionOrganization(deps.prisma, { name: `Org A ${run}`, slug: `it-a-${run}` })).id
+  orgB = (await provisionOrganization(deps.prisma, { name: `Org B ${run}`, slug: `it-b-${run}` })).id
+  orgIds.push(orgA, orgB)
+
+  await createUser(orgA, 'network_admin', `admin-a-${run}@it.test`)
+  await createUser(orgB, 'network_admin', `admin-b-${run}@it.test`)
+
+  const adminA = await signIn(`admin-a-${run}@it.test`)
+  advertiserA = (await adminA.post('/v1/advertisers', { companyName: 'IT Advertiser A', email: 'a@it.test' })).body.data.id
+  publisherA1 = (await adminA.post('/v1/publishers', { companyName: 'IT Publisher A1', email: 'p1@it.test', status: 'active' })).body.data.id
+  publisherA2 = (await adminA.post('/v1/publishers', { companyName: 'IT Publisher A2', email: 'p2@it.test', status: 'active' })).body.data.id
+  const campaign = await adminA.post('/v1/campaigns', {
+    name: 'IT Campaign A',
+    advertiserId: advertiserA,
+    category: 'Ecommerce',
+    status: 'active',
+    defaultPayout: '4.00',
+    defaultRevenue: '6.00',
+    landingPages: [{ name: 'Main', url: 'https://brand.example.com/?c={click_id}', isDefault: true }],
+  })
+  expect(campaign.status).toBe(201)
+  campaignA = campaign.body.data.id
+  await adminA.post(`/v1/campaigns/${campaignA}/publishers`, { publisherId: publisherA1, status: 'approved' })
+
+  await createUser(orgA, 'publisher', `pub-a1-${run}@it.test`, { publisherId: publisherA1 })
+  await createUser(orgA, 'publisher', `pub-a2-${run}@it.test`, { publisherId: publisherA2 })
+  await createUser(orgA, 'advertiser', `adv-a-${run}@it.test`, { advertiserId: advertiserA })
+  await createUser(orgA, 'analyst', `analyst-a-${run}@it.test`)
+}, 60_000)
+
+afterAll(async () => {
+  await deps.prisma.auditLog.deleteMany({ where: { organizationId: { in: orgIds } } })
+  // Journal entries are append-only (onDelete: Restrict), so test cleanup removes them explicitly.
+  await deps.prisma.ledgerEntry.deleteMany({ where: { journal: { organizationId: { in: orgIds } } } })
+  await deps.prisma.ledgerJournal.deleteMany({ where: { organizationId: { in: orgIds } } })
+  await deps.prisma.conversion.deleteMany({ where: { organizationId: { in: orgIds } } })
+  await deps.prisma.searchFeed.deleteMany({ where: { organizationId: { in: orgIds } } })
+  await deps.prisma.campaign.deleteMany({ where: { organizationId: { in: orgIds } } })
+  await deps.prisma.organization.deleteMany({ where: { id: { in: orgIds } } })
+  await deps.prisma.notificationPreference.deleteMany({ where: { userId: { in: userIds } } })
+  await deps.prisma.user.deleteMany({ where: { id: { in: userIds } } })
+  await closeDeps(deps)
+})
+
+describe('tenant isolation', () => {
+  it('hides another organization\'s campaigns, advertisers and publishers', async () => {
+    const adminB = await signIn(`admin-b-${run}@it.test`)
+    expect((await adminB.get(`/v1/campaigns/${campaignA}`)).status).toBe(404)
+    expect((await adminB.get(`/v1/advertisers/${advertiserA}`)).status).toBe(404)
+    expect((await adminB.get(`/v1/publishers/${publisherA1}`)).status).toBe(404)
+    const list = await adminB.get('/v1/campaigns')
+    expect(list.body.data.items.map((c: { id: string }) => c.id)).not.toContain(campaignA)
+  })
+
+  it('refuses to switch into an organization the user does not belong to', async () => {
+    const adminB = await signIn(`admin-b-${run}@it.test`)
+    expect((await adminB.post('/v1/auth/switch-organization', { organizationId: orgA })).status).toBe(404)
+  })
+
+  it('cannot attach another tenant\'s advertiser to a campaign', async () => {
+    const adminB = await signIn(`admin-b-${run}@it.test`)
+    const response = await adminB.post('/v1/campaigns', {
+      name: 'Cross-tenant attempt',
+      advertiserId: advertiserA,
+      category: 'Other',
+      landingPages: [{ name: 'x', url: 'https://x.example.com/', isDefault: true }],
+    })
+    expect(response.status).toBe(400)
+  })
+})
+
+describe('portal data scopes', () => {
+  it('shows an approved publisher the campaign but never the revenue rate', async () => {
+    const publisher = await signIn(`pub-a1-${run}@it.test`)
+    const campaign = await publisher.get(`/v1/campaigns/${campaignA}`)
+    expect(campaign.status).toBe(200)
+    expect(campaign.body.data.defaultPayout).toBe('4')
+    expect(campaign.body.data.defaultRevenue).toBeUndefined()
+  })
+
+  it('hides the campaign from a publisher who is not approved on it', async () => {
+    const publisher = await signIn(`pub-a2-${run}@it.test`)
+    expect((await publisher.get(`/v1/campaigns/${campaignA}`)).status).toBe(404)
+    expect((await publisher.get(`/v1/publishers/${publisherA1}`)).status).toBe(404)
+  })
+
+  it('never leaks other campaigns or links through search (regression: search OR overwrote scope)', async () => {
+    const publisher = await signIn(`pub-a2-${run}@it.test`)
+    const campaigns = await publisher.get('/v1/campaigns?search=IT%20Campaign')
+    expect(campaigns.body.data.items).toHaveLength(0)
+  })
+
+  it('returns the publisher\'s own profile, and only that', async () => {
+    const publisher = await signIn(`pub-a2-${run}@it.test`)
+    const own = await publisher.get(`/v1/publishers/${publisherA2}`)
+    expect(own.status).toBe(200)
+    expect(own.body.data.id).toBe(publisherA2)
+  })
+
+  it('stops publishers from managing advertisers and approving themselves', async () => {
+    const publisher = await signIn(`pub-a2-${run}@it.test`)
+    expect((await publisher.get('/v1/advertisers')).status).toBe(403)
+    expect((await publisher.post(`/v1/campaigns/${campaignA}/publishers`, { publisherId: publisherA2, status: 'approved' })).status).toBe(403)
+  })
+
+  it('shows an advertiser user the revenue they pay but not publisher payouts', async () => {
+    const advertiser = await signIn(`adv-a-${run}@it.test`)
+    const campaign = await advertiser.get(`/v1/campaigns/${campaignA}`)
+    expect(campaign.status).toBe(200)
+    expect(campaign.body.data.defaultPayout).toBeUndefined()
+  })
+
+  it('forces campaigns submitted by an advertiser to pending', async () => {
+    const advertiser = await signIn(`adv-a-${run}@it.test`)
+    const response = await advertiser.post('/v1/campaigns', {
+      name: 'Advertiser submission',
+      advertiserId: advertiserA,
+      category: 'Other',
+      status: 'active',
+      landingPages: [{ name: 'x', url: 'https://brand.example.com/x', isDefault: true }],
+    })
+    expect(response.status).toBe(201)
+    expect(response.body.data.status).toBe('pending')
+  })
+})
+
+describe('request security', () => {
+  it('rejects state-changing requests without a CSRF token', async () => {
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    const response = await admin.rawPost('/v1/advertisers', { companyName: 'No CSRF', email: 'x@it.test' })
+    expect(response.status).toBe(403)
+    expect(response.body.code).toBe('csrf')
+  })
+
+  it('rejects unauthenticated access', async () => {
+    expect((await request(app).get('/v1/campaigns')).status).toBe(401)
+  })
+
+  it('prevents granting permissions the actor does not hold (privilege escalation)', async () => {
+    const analyst = await signIn(`analyst-a-${run}@it.test`)
+    const response = await analyst.post('/v1/roles', { name: 'Escalate', scope: 'organization', permissions: ['finance.approve'] })
+    expect(response.status).toBe(403)
+  })
+
+  it('rejects landing pages with macros in the hostname', async () => {
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    const response = await admin.post(`/v1/campaigns/${campaignA}/landing-pages`, { name: 'bad', url: 'https://{subid1}.evil.example/' })
+    expect(response.status).toBe(400)
+  })
+
+  it('records an audit entry for campaign changes', async () => {
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    await admin.patch(`/v1/campaigns/${campaignA}`, { description: 'Updated by integration test' })
+    const after = await admin.get(`/v1/campaigns/${campaignA}`)
+    // Regression: partial updates used to reset defaulted fields (payouts became 0).
+    expect(after.body.data.defaultPayout).toBe('4')
+    expect(after.body.data.status).toBe('active')
+    const logs = await admin.get(`/v1/audit-logs?entityType=campaign&entityId=${campaignA}`)
+    expect(logs.body.data.items.some((entry: { action: string }) => entry.action === 'campaign.updated')).toBe(true)
+  })
+})
+
+describe('conversions', () => {
+  let conversionId: string
+
+  beforeAll(async () => {
+    const campaign = await deps.prisma.campaign.findUniqueOrThrow({ where: { id: campaignA } })
+    const clickId = generateClickId()
+    const context: ClickContext = {
+      clickId,
+      ts: Date.now() - 60_000,
+      organizationId: orgA,
+      campaignId: campaignA,
+      publisherId: publisherA1,
+      advertiserId: campaign.advertiserId,
+      linkId: '00000000-0000-4000-8000-000000000000',
+      domainId: '00000000-0000-4000-8000-000000000000',
+      sub1: 'it',
+      sub2: '',
+      sub3: '',
+      sub4: '',
+      sub5: '',
+      source: '',
+      country: 'US',
+      deviceType: 'desktop',
+      externalClickId: '',
+      isValid: true,
+      invalidReason: '',
+      visitorId: 'it-visitor',
+      referrerDomain: '',
+    }
+    await deps.redis.set(REDIS_KEYS.click(clickId), JSON.stringify(context), 'EX', 3600)
+    const result = await deps.conversions.ingest({ source: 's2s', clickId, event: 'sale', transactionId: `IT-${run}`, saleAmount: '50.00', currency: 'USD', customParams: {}, receivedAt: Date.now() })
+    expect(result.outcome).toBe('created')
+    if (result.outcome === 'created') conversionId = result.conversion.id
+    const duplicate = await deps.conversions.ingest({ source: 's2s', clickId, event: 'sale', transactionId: `IT-${run}`, saleAmount: '50.00', currency: 'USD', customParams: {}, receivedAt: Date.now() })
+    expect(duplicate.outcome).toBe('duplicate')
+  })
+
+  it('uses the campaign default payout and revenue', async () => {
+    const conversion = await deps.prisma.conversion.findUniqueOrThrow({ where: { id: conversionId } })
+    expect(conversion.payout.toString()).toBe('4')
+    expect(conversion.revenue.toString()).toBe('6')
+    expect(conversion.status).toBe('pending')
+  })
+
+  it('shows the owning publisher their payout but not revenue', async () => {
+    const publisher = await signIn(`pub-a1-${run}@it.test`)
+    const response = await publisher.get(`/v1/conversions/${conversionId}`)
+    expect(response.status).toBe(200)
+    expect(response.body.data.payout).toBe('4')
+    expect(response.body.data.revenue).toBeUndefined()
+    expect(response.body.data.attributions).toBeUndefined()
+  })
+
+  it('hides the conversion from another publisher and another organization', async () => {
+    const other = await signIn(`pub-a2-${run}@it.test`)
+    expect((await other.get(`/v1/conversions/${conversionId}`)).status).toBe(404)
+    const adminB = await signIn(`admin-b-${run}@it.test`)
+    expect((await adminB.get(`/v1/conversions/${conversionId}`)).status).toBe(404)
+  })
+
+  it('stops publishers approving their own conversions', async () => {
+    const publisher = await signIn(`pub-a1-${run}@it.test`)
+    expect((await publisher.post(`/v1/conversions/${conversionId}/status`, { status: 'approved' })).status).toBe(403)
+  })
+
+  it('enforces status transitions and records history', async () => {
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    expect((await admin.post(`/v1/conversions/${conversionId}/status`, { status: 'approved', note: 'ok' })).status).toBe(200)
+    expect((await admin.post(`/v1/conversions/${conversionId}/status`, { status: 'reversed', note: 'chargeback' })).status).toBe(200)
+    expect((await admin.post(`/v1/conversions/${conversionId}/status`, { status: 'approved' })).status).toBe(409)
+    const detail = await admin.get(`/v1/conversions/${conversionId}`)
+    expect(detail.body.data.events.map((e: { type: string }) => e.type)).toEqual(['created', 'duplicate_received', 'approved', 'reversed'])
+  })
+
+  it('rejects postback URLs that point at private networks when not allowed', async () => {
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    const response = await admin.post('/v1/postbacks', { name: 'ssrf', events: ['conversion.created'], urlTemplate: 'https://169.254.169.254/latest?c={click_id}' })
+    expect(response.status).toBe(400)
+  })
+})
+
+/** Notifications are fire-and-forget; poll briefly for the expected rows. */
+const notificationsFor = async (email: string, type: string, expectAtLeast = 1) => {
+  const user = await deps.prisma.user.findUniqueOrThrow({ where: { email } })
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const rows = await deps.prisma.notification.findMany({ where: { userId: user.id, type } })
+    if (rows.length >= expectAtLeast) return rows
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  return deps.prisma.notification.findMany({ where: { userId: user.id, type } })
+}
+
+describe('notifications', () => {
+  it('sends application requests to staff and the campaign advertiser only, and decisions to the applicant only', async () => {
+    const applicant = await signIn(`pub-a2-${run}@it.test`)
+    expect((await applicant.post(`/v1/campaigns/${campaignA}/apply`, { note: 'Search traffic' })).status).toBe(201)
+
+    expect(await notificationsFor(`admin-a-${run}@it.test`, 'application.submitted')).toHaveLength(1)
+    expect(await notificationsFor(`adv-a-${run}@it.test`, 'application.submitted')).toHaveLength(1)
+    expect(await notificationsFor(`pub-a1-${run}@it.test`, 'application.submitted', 0)).toHaveLength(0)
+    expect(await notificationsFor(`admin-b-${run}@it.test`, 'application.submitted', 0)).toHaveLength(0)
+    // The applicant is the actor and is not notified about their own action.
+    expect(await notificationsFor(`pub-a2-${run}@it.test`, 'application.submitted', 0)).toHaveLength(0)
+
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    const application = await deps.prisma.campaignPublisher.findFirstOrThrow({ where: { campaignId: campaignA, publisherId: publisherA2 } })
+    expect((await admin.patch(`/v1/campaigns/applications/${application.id}`, { status: 'rejected', note: 'Not a fit' })).status).toBe(200)
+    const decided = await notificationsFor(`pub-a2-${run}@it.test`, 'application.decided')
+    expect(decided).toHaveLength(1)
+    expect(decided[0]!.title).toContain('rejected')
+    expect(await notificationsFor(`pub-a1-${run}@it.test`, 'application.decided', 0)).toHaveLength(0)
+  })
+
+  it('lists only the signed-in user\'s notifications and refuses to mark someone else\'s as read', async () => {
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    const list = await admin.get('/v1/notifications')
+    expect(list.status).toBe(200)
+    expect(list.body.data.unread).toBeGreaterThan(0)
+    const adminUser = await deps.prisma.user.findUniqueOrThrow({ where: { email: `admin-a-${run}@it.test` } })
+    expect(list.body.data.items.every((n: { userId: string }) => n.userId === adminUser.id)).toBe(true)
+
+    const other = await signIn(`adv-a-${run}@it.test`)
+    expect((await other.post(`/v1/notifications/${list.body.data.items[0].id}/read`)).status).toBe(404)
+    expect((await admin.post(`/v1/notifications/${list.body.data.items[0].id}/read`)).status).toBe(200)
+    expect((await admin.post('/v1/notifications/read-all')).body.data.unread).toBe(0)
+  })
+
+  it('offers publishers only the notification types they can receive', async () => {
+    const publisher = await signIn(`pub-a1-${run}@it.test`)
+    const prefs = await publisher.get('/v1/notifications/preferences')
+    const types = prefs.body.data.items.map((i: { type: string }) => i.type)
+    expect(types).toContain('payout.updated')
+    expect(types).not.toContain('fraud.alert')
+    expect(types).not.toContain('payout.requested')
+    expect((await publisher.put('/v1/notifications/preferences', { items: [{ type: 'fraud.alert', inApp: true, email: true }] })).status).toBe(400)
+    const saved = await publisher.put('/v1/notifications/preferences', { items: [{ type: 'payout.updated', inApp: true, email: false }] })
+    expect(saved.status).toBe(200)
+    expect(saved.body.data.items.find((i: { type: string }) => i.type === 'payout.updated').email).toBe(false)
+  })
+})
+
+describe('scheduled reports', () => {
+  it('needs reports.schedule and only accepts recipients who are members able to view reports', async () => {
+    const publisher = await signIn(`pub-a1-${run}@it.test`)
+    const body = { name: 'Daily perf', frequency: 'daily', hourLocal: 8, config: { preset: 'yesterday' }, recipients: [`pub-a1-${run}@it.test`] }
+    expect((await publisher.post('/v1/scheduled-reports', body)).status).toBe(403)
+
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    expect((await admin.post('/v1/scheduled-reports', { ...body, recipients: [`admin-b-${run}@it.test`] })).status).toBe(400)
+    expect((await admin.post('/v1/scheduled-reports', { ...body, frequency: 'weekly', recipients: [`admin-a-${run}@it.test`] })).status).toBe(400)
+
+    const created = await admin.post('/v1/scheduled-reports', { ...body, recipients: [`admin-a-${run}@it.test`, `analyst-a-${run}@it.test`] })
+    expect(created.status).toBe(201)
+    const ran = await admin.post(`/v1/scheduled-reports/${created.body.data.id}/run`)
+    expect(ran.status).toBe(200)
+    expect(ran.body.data.sent).toBe(2)
+    // Another user (analysts may schedule their own reports) cannot see or run it.
+    const analyst = await signIn(`analyst-a-${run}@it.test`)
+    expect((await analyst.post(`/v1/scheduled-reports/${created.body.data.id}/run`)).status).toBe(404)
+    expect((await analyst.get('/v1/scheduled-reports')).body.data).toHaveLength(0)
+  })
+})
+
+describe('search monetization', () => {
+  it('refuses to link a feed to another organization\'s campaign on update (regression)', async () => {
+    const adminA = await signIn(`admin-a-${run}@it.test`)
+    const adminB = await signIn(`admin-b-${run}@it.test`)
+    const advertiserB = (await adminB.post('/v1/advertisers', { companyName: 'IT Advertiser B', email: 'b@it.test' })).body.data.id
+    const campaignB = (
+      await adminB.post('/v1/campaigns', {
+        name: 'IT Campaign B',
+        advertiserId: advertiserB,
+        category: 'Ecommerce',
+        landingPages: [{ name: 'Main', url: 'https://b.example.com/', isDefault: true }],
+      })
+    ).body.data.id
+    const partner = (await adminA.post('/v1/search/partners', { name: 'IT Search Partner' })).body.data.id
+    const feed = await adminA.post(`/v1/search/partners/${partner}/feeds`, { name: 'Feed 1', externalCode: 'f1' })
+    expect(feed.status).toBe(201)
+    expect((await adminA.patch(`/v1/search/feeds/${feed.body.data.id}`, { campaignId: campaignB })).status).toBe(400)
+    expect((await adminA.patch(`/v1/search/feeds/${feed.body.data.id}`, { campaignId: campaignA })).status).toBe(200)
+  })
+})

@@ -1,0 +1,27 @@
+{
+  "name": "@ntrack/workers",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env src/index.ts",
+    "build": "tsup",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@clickhouse/client": "^1.23.1",
+    "@ntrack/analytics": "*",
+    "@ntrack/config-sync": "*",
+    "@ntrack/conversions": "*",
+    "@ntrack/db": "*",
+    "@ntrack/notifications": "*",
+    "@ntrack/shared": "*",
+    "bullmq": "^5.0.0",
+    "ioredis": "^5.11.1",
+    "pino": "^10.4.0",
+    "ua-parser-js": "^1.0.41"
+  },
+  "devDependencies": {
+    "@types/ua-parser-js": "^0.7.39"
+  }
+}

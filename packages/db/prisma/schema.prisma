@@ -1,0 +1,1323 @@
+// NTrack primary transactional schema (PostgreSQL).
+// High-volume events (clicks, redirect logs, delivery analytics) live in ClickHouse, see
+// packages/analytics. Every tenant-owned table carries organization_id and is always queried
+// through the tenant-scoped services in apps/api.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Tenancy & identity ──────────────────────────────────────────────────────
+
+enum OrganizationStatus {
+  active
+  suspended
+}
+
+model Organization {
+  id        String             @id @default(uuid()) @db.Uuid
+  publicId  String             @unique @map("public_id")
+  name      String
+  slug      String             @unique
+  status    OrganizationStatus @default(active)
+  timezone  String             @default("UTC")
+  currency  String             @default("USD") @db.Char(3)
+  createdAt DateTime           @default(now()) @map("created_at")
+  updatedAt DateTime           @updatedAt @map("updated_at")
+
+  settings          OrganizationSettings?
+  members           OrganizationMember[]
+  roles             Role[]
+  advertisers       Advertiser[]
+  publishers        Publisher[]
+  trafficSources    TrafficSource[]
+  campaigns         Campaign[]
+  trackingDomains   TrackingDomain[]
+  trackingLinks     TrackingLink[]
+  linkTemplates     LinkTemplate[]
+  auditLogs         AuditLog[]
+  managerAssignments ManagerAssignment[]
+  conversions        Conversion[]
+  postbacks          Postback[]
+  ledgerJournals     LedgerJournal[]
+  invoices           Invoice[]
+  payments           Payment[]
+  publisherPayouts   PublisherPayout[]
+  exchangeRates      ExchangeRate[]
+  fraudRules         FraudRule[]
+  fraudEvents        FraudEvent[]
+  searchPartners     SearchPartner[]
+  trafficCosts       TrafficCost[]
+  travelPartners     TravelPartner[]
+  notifications      Notification[]
+  scheduledReports   ScheduledReport[]
+
+  @@map("organizations")
+}
+
+enum IpStorageMode {
+  truncated
+  hashed
+  none
+}
+
+model OrganizationSettings {
+  organizationId               String        @id @map("organization_id") @db.Uuid
+  ipStorage                    IpStorageMode @default(truncated) @map("ip_storage")
+  collectReferrer              Boolean       @default(true) @map("collect_referrer")
+  referrerPolicy               String        @default("strict-origin-when-cross-origin") @map("referrer_policy")
+  requireHttpsDestinations     Boolean       @default(true) @map("require_https_destinations")
+  paramMap                     Json          @map("param_map")
+  defaultAttributionWindowHours Int          @default(720) @map("default_attribution_window_hours")
+  uniqueClickWindowHours       Int           @default(24) @map("unique_click_window_hours")
+  duplicateClickWindowSeconds  Int           @default(10) @map("duplicate_click_window_seconds")
+  clickRetentionDays           Int           @default(395) @map("click_retention_days")
+  mfaRequired                  Boolean       @default(false) @map("mfa_required")
+  /// Days the tracker keeps a first-party click cookie on tracking domains (enables pixel
+  /// conversions without click_id). 0 disables the cookie.
+  clickCookieDays              Int           @default(0) @map("click_cookie_days")
+  createdAt                    DateTime      @default(now()) @map("created_at")
+  updatedAt                    DateTime      @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("organization_settings")
+}
+
+enum UserStatus {
+  active
+  invited
+  disabled
+}
+
+model User {
+  id                 String     @id @default(uuid()) @db.Uuid
+  email              String     @unique
+  name               String
+  passwordHash       String?    @map("password_hash")
+  status             UserStatus @default(active)
+  isPlatformAdmin    Boolean    @default(false) @map("is_platform_admin")
+  mfaEnabled         Boolean    @default(false) @map("mfa_enabled")
+  mfaSecretEncrypted String?    @map("mfa_secret_encrypted")
+  failedLoginCount   Int        @default(0) @map("failed_login_count")
+  lockedUntil        DateTime?  @map("locked_until")
+  lastLoginAt        DateTime?  @map("last_login_at")
+  createdAt          DateTime   @default(now()) @map("created_at")
+  updatedAt          DateTime   @updatedAt @map("updated_at")
+
+  memberships OrganizationMember[]
+  sessions    Session[]
+
+  @@map("users")
+}
+
+model Permission {
+  key    String @id
+  module String
+  label  String
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+enum RoleScope {
+  organization
+  advertiser
+  publisher
+  managed
+}
+
+model Role {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  slug           String
+  name           String
+  description    String    @default("")
+  scope          RoleScope @default(organization)
+  isSystem       Boolean   @default(false) @map("is_system")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  permissions  RolePermission[]
+  members      OrganizationMember[]
+
+  @@unique([organizationId, slug])
+  @@map("roles")
+}
+
+model RolePermission {
+  roleId        String @map("role_id") @db.Uuid
+  permissionKey String @map("permission_key")
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionKey], references: [key], onDelete: Cascade)
+
+  @@id([roleId, permissionKey])
+  @@map("role_permissions")
+}
+
+/// The spec's `user_roles`: a user's membership of an organization with one role. Portal users
+/// (advertiser/publisher roles) are linked to the advertiser or publisher they act for.
+model OrganizationMember {
+  id             String     @id @default(uuid()) @db.Uuid
+  organizationId String     @map("organization_id") @db.Uuid
+  userId         String     @map("user_id") @db.Uuid
+  roleId         String     @map("role_id") @db.Uuid
+  advertiserId   String?    @map("advertiser_id") @db.Uuid
+  publisherId    String?    @map("publisher_id") @db.Uuid
+  status         UserStatus @default(active)
+  createdAt      DateTime   @default(now()) @map("created_at")
+  updatedAt      DateTime   @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role         Role         @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  advertiser   Advertiser?  @relation(fields: [advertiserId], references: [id], onDelete: SetNull)
+  publisher    Publisher?   @relation(fields: [publisherId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+  @@map("user_roles")
+}
+
+/// Advertisers/publishers a `managed`-scope user (account manager, affiliate manager, agency) may access.
+model ManagerAssignment {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  advertiserId   String?  @map("advertiser_id") @db.Uuid
+  publisherId    String?  @map("publisher_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  advertiser   Advertiser?  @relation(fields: [advertiserId], references: [id], onDelete: Cascade)
+  publisher    Publisher?   @relation(fields: [publisherId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, userId])
+  @@map("manager_assignments")
+}
+
+model Session {
+  id                   String   @id @default(uuid()) @db.Uuid
+  userId               String   @map("user_id") @db.Uuid
+  tokenHash            String   @unique @map("token_hash")
+  activeOrganizationId String?  @map("active_organization_id") @db.Uuid
+  mfaVerified          Boolean  @default(false) @map("mfa_verified")
+  ip                   String   @default("")
+  userAgent            String   @default("") @map("user_agent")
+  expiresAt            DateTime @map("expires_at")
+  lastSeenAt           DateTime @default(now()) @map("last_seen_at")
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model AuditLog {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String?  @map("organization_id") @db.Uuid
+  actorUserId    String?  @map("actor_user_id") @db.Uuid
+  actorEmail     String?  @map("actor_email")
+  action         String
+  entityType     String   @map("entity_type")
+  entityId       String?  @map("entity_id")
+  summary        String   @default("")
+  before         Json?
+  after          Json?
+  ip             String   @default("")
+  userAgent      String   @default("") @map("user_agent")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
+
+// ─── Partners ────────────────────────────────────────────────────────────────
+
+enum PartnerStatus {
+  pending
+  active
+  suspended
+  rejected
+}
+
+enum PaymentTerms {
+  NET7
+  NET15
+  NET30
+  NET45
+  NET60
+  CUSTOM
+}
+
+model Advertiser {
+  id                 String        @id @default(uuid()) @db.Uuid
+  publicId           String        @unique @map("public_id")
+  organizationId     String        @map("organization_id") @db.Uuid
+  companyName        String        @map("company_name")
+  contactName        String        @default("") @map("contact_name")
+  email              String
+  phone              String        @default("")
+  website            String        @default("")
+  country            String        @default("") @db.VarChar(2)
+  address            String        @default("")
+  taxId              String        @default("") @map("tax_id")
+  status             PartnerStatus @default(pending)
+  paymentTerms       PaymentTerms  @default(NET30) @map("payment_terms")
+  customPaymentDays  Int?          @map("custom_payment_days")
+  currency           String        @default("USD") @db.Char(3)
+  notes              String        @default("")
+  /// Secret token advertisers include in server-to-server conversion postbacks. Stored encrypted
+  /// (shown in the console) and hashed (checked by the tracker).
+  postbackTokenEncrypted String?   @map("postback_token_encrypted")
+  postbackTokenHash      String?   @unique @map("postback_token_hash")
+  createdAt          DateTime      @default(now()) @map("created_at")
+  updatedAt          DateTime      @updatedAt @map("updated_at")
+
+  organization       Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  campaigns          Campaign[]
+  conversions        Conversion[]
+  invoices           Invoice[]
+  payments           Payment[]
+  members            OrganizationMember[]
+  managerAssignments ManagerAssignment[]
+  trackingDomains    TrackingDomain[]
+
+  @@index([organizationId, status])
+  @@map("advertisers")
+}
+
+model Publisher {
+  id                      String        @id @default(uuid()) @db.Uuid
+  publicId                String        @unique @map("public_id")
+  organizationId          String        @map("organization_id") @db.Uuid
+  companyName             String        @map("company_name")
+  contactName             String        @default("") @map("contact_name")
+  email                   String
+  phone                   String        @default("")
+  website                 String        @default("")
+  country                 String        @default("") @db.VarChar(2)
+  address                 String        @default("")
+  /// Tax and payment details are encrypted at the application layer (AES-256-GCM).
+  taxInfoEncrypted        String?       @map("tax_info_encrypted")
+  paymentDetailsEncrypted String?       @map("payment_details_encrypted")
+  trafficSources          String[]      @default([]) @map("traffic_sources")
+  marketingMethods        String[]      @default([]) @map("marketing_methods")
+  promotionalChannels     String[]      @default([]) @map("promotional_channels")
+  monthlyTraffic          String        @default("") @map("monthly_traffic")
+  businessCategory        String        @default("") @map("business_category")
+  status                  PartnerStatus @default(pending)
+  paymentTerms            PaymentTerms  @default(NET30) @map("payment_terms")
+  customPaymentDays       Int?          @map("custom_payment_days")
+  currency                String        @default("USD") @db.Char(3)
+  notes                   String        @default("")
+  createdAt               DateTime      @default(now()) @map("created_at")
+  updatedAt               DateTime      @updatedAt @map("updated_at")
+
+  organization       Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  campaignPublishers CampaignPublisher[]
+  payouts            CampaignPayout[]
+  trackingLinks      TrackingLink[]
+  members            OrganizationMember[]
+  managerAssignments ManagerAssignment[]
+  conversions        Conversion[]
+  postbacks          Postback[]
+  publisherPayouts   PublisherPayout[]
+  payments           Payment[]
+
+  @@index([organizationId, status])
+  @@map("publishers")
+}
+
+model TrafficSource {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  name           String
+  type           String
+  description    String   @default("")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  payouts      CampaignPayout[]
+
+  @@unique([organizationId, name])
+  @@map("traffic_sources")
+}
+
+// ─── Campaigns ───────────────────────────────────────────────────────────────
+
+enum CampaignStatus {
+  draft
+  pending
+  active
+  paused
+  archived
+}
+
+enum CampaignVisibility {
+  public
+  approval_required
+  private
+}
+
+enum PayoutModel {
+  CPA
+  CPL
+  CPS
+  CPI
+  CPC
+  CPM
+  REVSHARE
+  HYBRID
+}
+
+enum RedirectMode {
+  standard
+  transparent
+}
+
+model Campaign {
+  id                     String             @id @default(uuid()) @db.Uuid
+  publicId               String             @unique @map("public_id")
+  organizationId         String             @map("organization_id") @db.Uuid
+  advertiserId           String             @map("advertiser_id") @db.Uuid
+  name                   String
+  description            String             @default("")
+  vertical               String             @default("")
+  category               String
+  previewUrl             String             @default("") @map("preview_url")
+  status                 CampaignStatus     @default(draft)
+  visibility             CampaignVisibility @default(approval_required)
+  startsAt               DateTime?          @map("starts_at")
+  endsAt                 DateTime?          @map("ends_at")
+  geoAllowed             String[]           @default([]) @map("geo_allowed")
+  geoBlocked             String[]           @default([]) @map("geo_blocked")
+  devices                String[]           @default([])
+  operatingSystems       String[]           @default([]) @map("operating_systems")
+  browsers               String[]           @default([])
+  languages              String[]           @default([])
+  allowedTrafficTypes    String[]           @default([]) @map("allowed_traffic_types")
+  restrictedTrafficTypes String[]           @default([]) @map("restricted_traffic_types")
+  conversionGoal         String             @default("sale") @map("conversion_goal")
+  attributionModel       String             @default("last_click") @map("attribution_model")
+  attributionWindowHours Int                @default(720) @map("attribution_window_hours")
+  payoutModel            PayoutModel        @default(CPA) @map("payout_model")
+  revenueModel           PayoutModel        @default(CPA) @map("revenue_model")
+  currency               String             @default("USD") @db.Char(3)
+  /// Default rates; per-publisher/geo/device tiers live in campaign_payouts. Decimal keeps
+  /// sub-cent CPC/CPM rates exact.
+  defaultRevenue         Decimal            @default(0) @map("default_revenue") @db.Decimal(18, 6)
+  defaultPayout          Decimal            @default(0) @map("default_payout") @db.Decimal(18, 6)
+  dailyClickCap          Int?               @map("daily_click_cap")
+  dailyConversionCap     Int?               @map("daily_conversion_cap")
+  monthlyBudget          Decimal?           @map("monthly_budget") @db.Decimal(18, 2)
+  totalBudget            Decimal?           @map("total_budget") @db.Decimal(18, 2)
+  frequencyCap           Int?               @map("frequency_cap")
+  redirectMode           RedirectMode       @default(standard) @map("redirect_mode")
+  destinationParam       String             @default("url") @map("destination_param")
+  transparentClickIdParam String            @default("") @map("transparent_click_id_param")
+  allowDeepLinks         Boolean            @default(false) @map("allow_deep_links")
+  allowedHosts           String[]           @default([]) @map("allowed_hosts")
+  requireHttps           Boolean            @default(true) @map("require_https")
+  fallbackUrl            String?            @map("fallback_url")
+  referrerPolicy         String?            @map("referrer_policy")
+  /// When true, conversions are approved on arrival; otherwise they wait for review.
+  autoApproveConversions Boolean            @default(false) @map("auto_approve_conversions")
+  /// Allows several conversions of the same event per click (e.g. repeat purchases with distinct transaction IDs).
+  allowMultipleConversions Boolean          @default(false) @map("allow_multiple_conversions")
+  approvedAt             DateTime?          @map("approved_at")
+  approvedById           String?            @map("approved_by_id") @db.Uuid
+  archivedAt             DateTime?          @map("archived_at")
+  createdById            String?            @map("created_by_id") @db.Uuid
+  createdAt              DateTime           @default(now()) @map("created_at")
+  updatedAt              DateTime           @updatedAt @map("updated_at")
+
+  organization  Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  advertiser    Advertiser          @relation(fields: [advertiserId], references: [id], onDelete: Restrict)
+  landingPages  LandingPage[]
+  publishers    CampaignPublisher[]
+  payouts       CampaignPayout[]
+  payoutChanges PayoutChangeLog[]
+  domains       CampaignDomain[]
+  trackingLinks TrackingLink[]
+  conversions   Conversion[]
+  postbacks     Postback[]
+
+  @@index([organizationId, status])
+  @@index([organizationId, advertiserId])
+  @@map("campaigns")
+}
+
+model LandingPage {
+  id             String   @id @default(uuid()) @db.Uuid
+  publicId       String   @unique @map("public_id")
+  organizationId String   @map("organization_id") @db.Uuid
+  campaignId     String   @map("campaign_id") @db.Uuid
+  name           String
+  /// May contain destination macros, e.g. https://brand.com/offer?aff_click={click_id}
+  url            String
+  isDefault      Boolean  @default(false) @map("is_default")
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  campaign      Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  trackingLinks TrackingLink[]
+
+  @@index([campaignId])
+  @@map("landing_pages")
+}
+
+enum ApplicationStatus {
+  pending
+  approved
+  rejected
+  blocked
+}
+
+model CampaignPublisher {
+  id             String            @id @default(uuid()) @db.Uuid
+  organizationId String            @map("organization_id") @db.Uuid
+  campaignId     String            @map("campaign_id") @db.Uuid
+  publisherId    String            @map("publisher_id") @db.Uuid
+  status         ApplicationStatus @default(pending)
+  applicationNote String           @default("") @map("application_note")
+  decisionNote   String            @default("") @map("decision_note")
+  decidedAt      DateTime?         @map("decided_at")
+  decidedById    String?           @map("decided_by_id") @db.Uuid
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+
+  campaign  Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  publisher Publisher @relation(fields: [publisherId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, publisherId])
+  @@index([organizationId, status])
+  @@map("campaign_publishers")
+}
+
+/// Payout/revenue tier. The most specific active tier matching a conversion wins (see
+/// PayoutResolver): publisher > traffic source > country > device > campaign default, ties broken by priority.
+model CampaignPayout {
+  id              String   @id @default(uuid()) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  campaignId      String   @map("campaign_id") @db.Uuid
+  name            String   @default("")
+  publisherId     String?  @map("publisher_id") @db.Uuid
+  trafficSourceId String?  @map("traffic_source_id") @db.Uuid
+  country         String?  @db.VarChar(2)
+  deviceType      String?  @map("device_type")
+  event           String?
+  payout          Decimal  @db.Decimal(18, 6)
+  revenue         Decimal  @db.Decimal(18, 6)
+  /// For REVSHARE: payout/revenue are percentages of sale amount instead of fixed amounts.
+  isPercentage    Boolean  @default(false) @map("is_percentage")
+  priority        Int      @default(0)
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  campaign      Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  publisher     Publisher?     @relation(fields: [publisherId], references: [id], onDelete: Cascade)
+  trafficSource TrafficSource? @relation(fields: [trafficSourceId], references: [id], onDelete: SetNull)
+
+  @@index([campaignId, active])
+  @@map("campaign_payouts")
+}
+
+/// Append-only history of every payout/revenue change, required by the spec.
+model PayoutChangeLog {
+  id               String   @id @default(uuid()) @db.Uuid
+  organizationId   String   @map("organization_id") @db.Uuid
+  campaignId       String   @map("campaign_id") @db.Uuid
+  campaignPayoutId String?  @map("campaign_payout_id") @db.Uuid
+  changedById      String?  @map("changed_by_id") @db.Uuid
+  changeType       String   @map("change_type")
+  before           Json?
+  after            Json?
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, createdAt(sort: Desc)])
+  @@map("payout_change_logs")
+}
+
+// ─── Tracking domains & links ───────────────────────────────────────────────
+
+enum DomainStatus {
+  pending_verification
+  active
+  inactive
+  failed
+}
+
+model TrackingDomain {
+  id                String       @id @default(uuid()) @db.Uuid
+  publicId          String       @unique @map("public_id")
+  organizationId    String       @map("organization_id") @db.Uuid
+  /// Globally unique: a hostname belongs to exactly one tenant (domain isolation).
+  hostname          String       @unique
+  purpose           String       @default("affiliate")
+  advertiserId      String?      @map("advertiser_id") @db.Uuid
+  status            DomainStatus @default(pending_verification)
+  isDefault         Boolean      @default(false) @map("is_default")
+  verificationToken String       @map("verification_token")
+  verifiedAt        DateTime?    @map("verified_at")
+  sslStatus         String       @default("unknown") @map("ssl_status")
+  sslExpiresAt      DateTime?    @map("ssl_expires_at")
+  domainExpiresAt   DateTime?    @map("domain_expires_at")
+  lastCheckedAt     DateTime?    @map("last_checked_at")
+  lastCheckOk       Boolean?     @map("last_check_ok")
+  lastLatencyMs     Int?         @map("last_latency_ms")
+  lastError         String?      @map("last_error")
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+
+  organization  Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  advertiser    Advertiser?         @relation(fields: [advertiserId], references: [id], onDelete: SetNull)
+  campaigns     CampaignDomain[]
+  trackingLinks TrackingLink[]
+  healthChecks  DomainHealthCheck[]
+
+  @@index([organizationId, status])
+  @@map("tracking_domains")
+}
+
+model DomainHealthCheck {
+  id           String    @id @default(uuid()) @db.Uuid
+  domainId     String    @map("domain_id") @db.Uuid
+  dnsOk        Boolean   @map("dns_ok")
+  httpsOk      Boolean   @map("https_ok")
+  statusCode   Int?      @map("status_code")
+  latencyMs    Int?      @map("latency_ms")
+  sslExpiresAt DateTime? @map("ssl_expires_at")
+  error        String?
+  checkedAt    DateTime  @default(now()) @map("checked_at")
+
+  domain TrackingDomain @relation(fields: [domainId], references: [id], onDelete: Cascade)
+
+  @@index([domainId, checkedAt(sort: Desc)])
+  @@map("domain_health_checks")
+}
+
+model CampaignDomain {
+  campaignId String @map("campaign_id") @db.Uuid
+  domainId   String @map("domain_id") @db.Uuid
+
+  campaign Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  domain   TrackingDomain @relation(fields: [domainId], references: [id], onDelete: Cascade)
+
+  @@id([campaignId, domainId])
+  @@map("campaign_domains")
+}
+
+model TrackingLink {
+  id             String   @id @default(uuid()) @db.Uuid
+  publicId       String   @unique @map("public_id")
+  slug           String   @unique
+  organizationId String   @map("organization_id") @db.Uuid
+  campaignId     String   @map("campaign_id") @db.Uuid
+  publisherId    String   @map("publisher_id") @db.Uuid
+  domainId       String   @map("domain_id") @db.Uuid
+  landingPageId  String?  @map("landing_page_id") @db.Uuid
+  name           String   @default("")
+  sub1           String   @default("")
+  sub2           String   @default("")
+  sub3           String   @default("")
+  sub4           String   @default("")
+  sub5           String   @default("")
+  source         String   @default("")
+  /// UTM and custom static parameters appended to the destination.
+  extraParams    Json     @default("{}") @map("extra_params")
+  active         Boolean  @default(true)
+  createdById    String?  @map("created_by_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  campaign     Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  publisher    Publisher      @relation(fields: [publisherId], references: [id], onDelete: Cascade)
+  domain       TrackingDomain @relation(fields: [domainId], references: [id], onDelete: Restrict)
+  landingPage  LandingPage?   @relation(fields: [landingPageId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, campaignId, publisherId])
+  @@index([domainId])
+  @@map("tracking_links")
+}
+
+model LinkTemplate {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  name           String
+  config         Json
+  createdById    String?  @map("created_by_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, name])
+  @@map("link_templates")
+}
+
+// ─── Conversions, attribution, postbacks (Phase 2) ──────────────────────────
+
+enum ConversionStatus {
+  pending
+  approved
+  rejected
+  reversed
+}
+
+enum ConversionSource {
+  s2s
+  pixel
+  javascript
+  api
+  manual
+}
+
+model Conversion {
+  id              String           @id @default(uuid()) @db.Uuid
+  publicId        String           @unique @map("public_id")
+  organizationId  String           @map("organization_id") @db.Uuid
+  campaignId      String           @map("campaign_id") @db.Uuid
+  publisherId     String           @map("publisher_id") @db.Uuid
+  advertiserId    String           @map("advertiser_id") @db.Uuid
+  clickId         String           @map("click_id")
+  linkId          String?          @map("link_id") @db.Uuid
+  domainId        String?          @map("domain_id") @db.Uuid
+  event           String           @default("sale")
+  transactionId   String?          @map("transaction_id")
+  /// Deduplication key: org + transaction ID, or click + event when no transaction ID is sent.
+  idempotencyKey  String           @map("idempotency_key")
+  source          ConversionSource
+  status          ConversionStatus @default(pending)
+  statusReason    String           @default("") @map("status_reason")
+  currency        String           @default("USD") @db.Char(3)
+  saleAmount      Decimal?         @map("sale_amount") @db.Decimal(18, 6)
+  revenue         Decimal          @default(0) @db.Decimal(18, 6)
+  payout          Decimal          @default(0) @db.Decimal(18, 6)
+  /// Which payout tier produced the rates (null = campaign defaults).
+  campaignPayoutId String?         @map("campaign_payout_id") @db.Uuid
+  attributionModel String          @map("attribution_model")
+  sub1            String           @default("")
+  sub2            String           @default("")
+  sub3            String           @default("")
+  sub4            String           @default("")
+  sub5            String           @default("")
+  trafficSource   String           @default("") @map("traffic_source")
+  country         String           @default("")
+  deviceType      String           @default("") @map("device_type")
+  customParams    Json             @default("{}") @map("custom_params")
+  clickedAt       DateTime         @map("clicked_at")
+  convertedAt     DateTime         @map("converted_at")
+  clickInvalid    Boolean          @default(false) @map("click_invalid")
+  /// Amounts currently booked in the ledger (approved conversions only). Ledger sync posts the
+  /// difference between these and the target, so bookings are idempotent.
+  bookedRevenue   Decimal          @default(0) @map("booked_revenue") @db.Decimal(18, 6)
+  bookedPayout    Decimal          @default(0) @map("booked_payout") @db.Decimal(18, 6)
+  invoiceId       String?          @map("invoice_id") @db.Uuid
+  payoutId        String?          @map("payout_id") @db.Uuid
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  campaign     Campaign            @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  publisher    Publisher           @relation(fields: [publisherId], references: [id], onDelete: Restrict)
+  advertiser   Advertiser          @relation(fields: [advertiserId], references: [id], onDelete: Restrict)
+  events       ConversionEvent[]
+  attributions AttributionEvent[]
+  deliveries   WebhookDelivery[]
+  invoice      Invoice?            @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  publisherPayout PublisherPayout? @relation(fields: [payoutId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, idempotencyKey])
+  @@index([organizationId, convertedAt(sort: Desc)])
+  @@index([organizationId, status])
+  @@index([campaignId, convertedAt])
+  @@index([publisherId, convertedAt])
+  @@index([clickId])
+  @@map("conversions")
+}
+
+/// Append-only history of a conversion: creation, status changes, adjustments, duplicates.
+model ConversionEvent {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  conversionId   String   @map("conversion_id") @db.Uuid
+  type           String
+  actorUserId    String?  @map("actor_user_id") @db.Uuid
+  note           String   @default("")
+  data           Json     @default("{}")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  conversion Conversion @relation(fields: [conversionId], references: [id], onDelete: Cascade)
+
+  @@index([conversionId, createdAt])
+  @@map("conversion_events")
+}
+
+/// Credit given to each click in the journey under the campaign's attribution model.
+model AttributionEvent {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  conversionId   String   @map("conversion_id") @db.Uuid
+  clickId        String   @map("click_id")
+  publisherId    String   @map("publisher_id") @db.Uuid
+  campaignId     String   @map("campaign_id") @db.Uuid
+  model          String
+  position       Int
+  credit         Decimal  @db.Decimal(7, 6)
+  clickedAt      DateTime @map("clicked_at")
+  /// No referrer and no declared source; needed to recalculate last-non-direct later.
+  direct         Boolean  @default(false)
+  /// Recalculations add a new version instead of rewriting history.
+  version        Int      @default(1)
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  conversion Conversion @relation(fields: [conversionId], references: [id], onDelete: Cascade)
+
+  @@index([conversionId, version])
+  @@map("attribution_events")
+}
+
+enum PostbackMethod {
+  GET
+  POST
+}
+
+/// Outbound postback / webhook. Owned by a publisher (their conversions only) or the
+/// organization (all conversions, optionally one campaign).
+model Postback {
+  id                   String         @id @default(uuid()) @db.Uuid
+  publicId             String         @unique @map("public_id")
+  organizationId       String         @map("organization_id") @db.Uuid
+  publisherId          String?        @map("publisher_id") @db.Uuid
+  campaignId           String?        @map("campaign_id") @db.Uuid
+  name                 String
+  events               String[]       @default(["conversion.created"])
+  method               PostbackMethod @default(GET)
+  urlTemplate          String         @map("url_template")
+  bodyTemplate         Json?          @map("body_template")
+  headers              Json           @default("{}")
+  authTokenEncrypted   String?        @map("auth_token_encrypted")
+  hmacSecretEncrypted  String?        @map("hmac_secret_encrypted")
+  active               Boolean        @default(true)
+  createdAt            DateTime       @default(now()) @map("created_at")
+  updatedAt            DateTime       @updatedAt @map("updated_at")
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  publisher    Publisher?        @relation(fields: [publisherId], references: [id], onDelete: Cascade)
+  campaign     Campaign?         @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  deliveries   WebhookDelivery[]
+
+  @@index([organizationId, active])
+  @@map("postbacks")
+}
+
+enum DeliveryStatus {
+  pending
+  success
+  failed
+  retrying
+}
+
+model WebhookDelivery {
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @map("organization_id") @db.Uuid
+  postbackId     String         @map("postback_id") @db.Uuid
+  conversionId   String?        @map("conversion_id") @db.Uuid
+  /// Stable per (postback, conversion, event) so receivers can deduplicate retries.
+  eventId        String         @map("event_id")
+  event          String
+  status         DeliveryStatus @default(pending)
+  attempts       Int            @default(0)
+  requestMethod  String         @map("request_method")
+  requestUrl     String         @map("request_url")
+  requestBody    String?        @map("request_body")
+  responseStatus Int?           @map("response_status")
+  responseBody   String?        @map("response_body")
+  durationMs     Int?           @map("duration_ms")
+  error          String?
+  isTest         Boolean        @default(false) @map("is_test")
+  lastAttemptAt  DateTime?      @map("last_attempt_at")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  postback   Postback    @relation(fields: [postbackId], references: [id], onDelete: Cascade)
+  conversion Conversion? @relation(fields: [conversionId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([postbackId, createdAt(sort: Desc)])
+  @@map("webhook_deliveries")
+}
+
+// ─── Finance (Phase 3) ───────────────────────────────────────────────────────
+
+enum LedgerAccount {
+  advertiser_receivable
+  publisher_payable
+  network_revenue
+  network_cost
+  cash
+}
+
+/// A balanced set of ledger entries (sum of amounts = 0 per currency). Never edited or deleted;
+/// corrections are new journals.
+model LedgerJournal {
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String        @map("organization_id") @db.Uuid
+  type           String
+  reference      String        @default("")
+  memo           String        @default("")
+  currency       String        @db.Char(3)
+  createdById    String?       @map("created_by_id") @db.Uuid
+  createdAt      DateTime      @default(now()) @map("created_at")
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  entries      LedgerEntry[]
+
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@map("ledger_journals")
+}
+
+/// Debits are positive, credits negative.
+model LedgerEntry {
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String        @map("organization_id") @db.Uuid
+  journalId      String        @map("journal_id") @db.Uuid
+  account        LedgerAccount
+  advertiserId   String?       @map("advertiser_id") @db.Uuid
+  publisherId    String?       @map("publisher_id") @db.Uuid
+  campaignId     String?       @map("campaign_id") @db.Uuid
+  conversionId   String?       @map("conversion_id") @db.Uuid
+  amount         Decimal       @db.Decimal(18, 6)
+  currency       String        @db.Char(3)
+  createdAt      DateTime      @default(now()) @map("created_at")
+
+  journal LedgerJournal @relation(fields: [journalId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, account, advertiserId])
+  @@index([organizationId, account, publisherId])
+  @@index([conversionId])
+  @@map("ledger_entries")
+}
+
+enum InvoiceType {
+  invoice
+  credit_note
+}
+
+enum InvoiceStatus {
+  draft
+  issued
+  paid
+  void
+}
+
+model Invoice {
+  id             String        @id @default(uuid()) @db.Uuid
+  publicId       String        @unique @map("public_id")
+  organizationId String        @map("organization_id") @db.Uuid
+  advertiserId   String        @map("advertiser_id") @db.Uuid
+  type           InvoiceType   @default(invoice)
+  number         String
+  status         InvoiceStatus @default(draft)
+  currency       String        @db.Char(3)
+  periodStart    DateTime      @map("period_start")
+  periodEnd      DateTime      @map("period_end")
+  subtotal       Decimal       @db.Decimal(18, 2)
+  taxRate        Decimal       @default(0) @map("tax_rate") @db.Decimal(5, 2)
+  taxAmount      Decimal       @default(0) @map("tax_amount") @db.Decimal(18, 2)
+  total          Decimal       @db.Decimal(18, 2)
+  amountPaid     Decimal       @default(0) @map("amount_paid") @db.Decimal(18, 2)
+  issuedAt       DateTime?     @map("issued_at")
+  dueDate        DateTime?     @map("due_date")
+  paidAt         DateTime?     @map("paid_at")
+  voidedAt       DateTime?     @map("voided_at")
+  notes          String        @default("")
+  creditForId    String?       @map("credit_for_id") @db.Uuid
+  createdById    String?       @map("created_by_id") @db.Uuid
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  advertiser   Advertiser    @relation(fields: [advertiserId], references: [id], onDelete: Restrict)
+  lines        InvoiceLine[]
+  conversions  Conversion[]
+  payments     Payment[]
+
+  @@unique([organizationId, number])
+  @@index([organizationId, status])
+  @@map("invoices")
+}
+
+model InvoiceLine {
+  id          String  @id @default(uuid()) @db.Uuid
+  invoiceId   String  @map("invoice_id") @db.Uuid
+  campaignId  String? @map("campaign_id") @db.Uuid
+  description String
+  quantity    Int
+  amount      Decimal @db.Decimal(18, 2)
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@map("invoice_lines")
+}
+
+enum PaymentDirection {
+  incoming
+  outgoing
+}
+
+model Payment {
+  id             String           @id @default(uuid()) @db.Uuid
+  publicId       String           @unique @map("public_id")
+  organizationId String           @map("organization_id") @db.Uuid
+  direction      PaymentDirection
+  advertiserId   String?          @map("advertiser_id") @db.Uuid
+  publisherId    String?          @map("publisher_id") @db.Uuid
+  invoiceId      String?          @map("invoice_id") @db.Uuid
+  payoutId       String?          @map("payout_id") @db.Uuid
+  amount         Decimal          @db.Decimal(18, 2)
+  currency       String           @db.Char(3)
+  method         String           @default("")
+  reference      String           @default("")
+  paidAt         DateTime         @map("paid_at")
+  notes          String           @default("")
+  createdById    String?          @map("created_by_id") @db.Uuid
+  createdAt      DateTime         @default(now()) @map("created_at")
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  advertiser   Advertiser?      @relation(fields: [advertiserId], references: [id], onDelete: Restrict)
+  publisher    Publisher?       @relation(fields: [publisherId], references: [id], onDelete: Restrict)
+  invoice      Invoice?         @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  payout       PublisherPayout? @relation(fields: [payoutId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, paidAt(sort: Desc)])
+  @@map("payments")
+}
+
+enum PayoutStatus {
+  requested
+  approved
+  paid
+  rejected
+}
+
+model PublisherPayout {
+  id               String       @id @default(uuid()) @db.Uuid
+  publicId         String       @unique @map("public_id")
+  organizationId   String       @map("organization_id") @db.Uuid
+  publisherId      String       @map("publisher_id") @db.Uuid
+  status           PayoutStatus @default(requested)
+  currency         String       @db.Char(3)
+  amount           Decimal      @db.Decimal(18, 2)
+  conversionCount  Int          @default(0) @map("conversion_count")
+  periodEnd        DateTime     @map("period_end")
+  requestedById    String?      @map("requested_by_id") @db.Uuid
+  approvedById     String?      @map("approved_by_id") @db.Uuid
+  approvedAt       DateTime?    @map("approved_at")
+  paidAt           DateTime?    @map("paid_at")
+  rejectionReason  String       @default("") @map("rejection_reason")
+  notes            String       @default("")
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  publisher    Publisher    @relation(fields: [publisherId], references: [id], onDelete: Restrict)
+  conversions  Conversion[]
+  payments     Payment[]
+
+  @@index([organizationId, status])
+  @@map("publisher_payouts")
+}
+
+/// Manual exchange rates to the organization's base currency (no external rate feed).
+model ExchangeRate {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  currency       String   @db.Char(3)
+  rateToBase     Decimal  @map("rate_to_base") @db.Decimal(18, 8)
+  effectiveDate  DateTime @map("effective_date") @db.Date
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, currency, effectiveDate])
+  @@map("exchange_rates")
+}
+
+// ─── Fraud (Phase 3) ─────────────────────────────────────────────────────────
+
+model FraudRule {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  name           String
+  /// fast_conversion | click_burst | invalid_click_ratio | conversion_rate_spike | repeated_transaction
+  type           String
+  threshold      Decimal  @db.Decimal(18, 6)
+  windowMinutes  Int      @default(60) @map("window_minutes")
+  minVolume      Int      @default(0) @map("min_volume")
+  severity       String   @default("medium")
+  /// flag = record only; hold = also keep affected conversions pending for review
+  action         String   @default("flag")
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  events       FraudEvent[]
+
+  @@map("fraud_rules")
+}
+
+enum FraudStatus {
+  open
+  confirmed
+  dismissed
+  appealed
+}
+
+model FraudEvent {
+  id             String      @id @default(uuid()) @db.Uuid
+  organizationId String      @map("organization_id") @db.Uuid
+  ruleId         String?     @map("rule_id") @db.Uuid
+  type           String
+  severity       String
+  riskScore      Int         @map("risk_score")
+  publisherId    String?     @map("publisher_id") @db.Uuid
+  campaignId     String?     @map("campaign_id") @db.Uuid
+  clickId        String?     @map("click_id")
+  conversionId   String?     @map("conversion_id") @db.Uuid
+  /// Plain-language explanation shown to reviewers and (on appeal) publishers.
+  reason         String
+  details        Json        @default("{}")
+  status         FraudStatus @default(open)
+  reviewNote     String      @default("") @map("review_note")
+  appealNote     String      @default("") @map("appeal_note")
+  reviewedById   String?     @map("reviewed_by_id") @db.Uuid
+  reviewedAt     DateTime?   @map("reviewed_at")
+  dedupeKey      String?     @map("dedupe_key")
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  rule         FraudRule?   @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, dedupeKey])
+  @@index([organizationId, status, createdAt(sort: Desc)])
+  @@index([publisherId])
+  @@map("fraud_events")
+}
+
+// ─── Search monetization (Phase 3) ──────────────────────────────────────────
+
+model SearchPartner {
+  id                  String   @id @default(uuid()) @db.Uuid
+  publicId            String   @unique @map("public_id")
+  organizationId      String   @map("organization_id") @db.Uuid
+  name                String
+  /// Adapter that understands this partner's reports: csv (column mapping) or manual.
+  adapter             String   @default("csv")
+  revenueSharePercent Decimal  @default(100) @map("revenue_share_percent") @db.Decimal(5, 2)
+  currency            String   @default("USD") @db.Char(3)
+  active              Boolean  @default(true)
+  contactEmail        String   @default("") @map("contact_email")
+  notes               String   @default("")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  feeds        SearchFeed[]
+  records      SearchRevenueRecord[]
+
+  @@map("search_partners")
+}
+
+model SearchFeed {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  partnerId      String   @map("partner_id") @db.Uuid
+  name           String
+  /// Channel / feed / type-tag code the partner uses in its reports.
+  externalCode   String   @map("external_code")
+  campaignId     String?  @map("campaign_id") @db.Uuid
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  partner SearchPartner         @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  records SearchRevenueRecord[]
+
+  @@unique([partnerId, externalCode])
+  @@map("search_feeds")
+}
+
+/// Revenue exactly as reported by the partner (never estimated).
+model SearchRevenueRecord {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  partnerId      String   @map("partner_id") @db.Uuid
+  feedId         String   @map("feed_id") @db.Uuid
+  date           DateTime @db.Date
+  country        String   @default("")
+  searches       Int      @default(0)
+  paidClicks     Int      @default(0) @map("paid_clicks")
+  grossRevenue   Decimal  @map("gross_revenue") @db.Decimal(18, 6)
+  netRevenue     Decimal  @map("net_revenue") @db.Decimal(18, 6)
+  currency       String   @db.Char(3)
+  source         String   @default("csv")
+  importBatch    String?  @map("import_batch")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  partner SearchPartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  feed    SearchFeed    @relation(fields: [feedId], references: [id], onDelete: Cascade)
+
+  @@unique([feedId, date, country])
+  @@index([organizationId, date])
+  @@map("search_revenue_records")
+}
+
+/// What we paid to acquire traffic (from ad platform reports or manual entry).
+model TrafficCost {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  date           DateTime @db.Date
+  campaignId     String?  @map("campaign_id") @db.Uuid
+  feedId         String?  @map("feed_id") @db.Uuid
+  source         String
+  cost           Decimal  @db.Decimal(18, 6)
+  currency       String   @db.Char(3)
+  clicksPurchased Int?    @map("clicks_purchased")
+  notes          String   @default("")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, date])
+  @@map("traffic_costs")
+}
+
+// ─── Travel (Phase 3) ────────────────────────────────────────────────────────
+
+model TravelPartner {
+  id                String   @id @default(uuid()) @db.Uuid
+  publicId          String   @unique @map("public_id")
+  organizationId    String   @map("organization_id") @db.Uuid
+  name              String
+  productTypes      String[] @default([]) @map("product_types")
+  /// generic (column-mapped CSV) or a named adapter such as hotelzoff.
+  adapter           String   @default("generic")
+  commissionPercent Decimal? @map("commission_percent") @db.Decimal(5, 2)
+  currency          String   @default("USD") @db.Char(3)
+  campaignId        String?  @map("campaign_id") @db.Uuid
+  active            Boolean  @default(true)
+  notes             String   @default("")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  bookings     TravelBooking[]
+
+  @@map("travel_partners")
+}
+
+model TravelBooking {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  partnerId      String    @map("partner_id") @db.Uuid
+  conversionId   String?   @map("conversion_id") @db.Uuid
+  clickId        String?   @map("click_id")
+  bookingRef     String    @map("booking_ref")
+  productType    String    @map("product_type")
+  destination    String    @default("")
+  startDate      DateTime? @map("start_date") @db.Date
+  endDate        DateTime? @map("end_date") @db.Date
+  travelers      Int?
+  bookingValue   Decimal   @map("booking_value") @db.Decimal(18, 2)
+  commission     Decimal   @db.Decimal(18, 2)
+  currency       String    @db.Char(3)
+  status         String    @default("booked")
+  source         String    @default("import")
+  /// unmatched | matched | mismatch (amount or status differs from the NTrack conversion)
+  reconciliation String    @default("unmatched")
+  discrepancy    Json?
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  partner TravelPartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  @@unique([partnerId, bookingRef])
+  @@index([organizationId, reconciliation])
+  @@map("travel_bookings")
+}
+
+// ─── Notifications (Phase 3) ─────────────────────────────────────────────────
+
+model Notification {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  type           String
+  title          String
+  body           String    @default("")
+  link           String    @default("")
+  readAt         DateTime? @map("read_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([userId, organizationId, readAt])
+  @@map("notifications")
+}
+
+model NotificationPreference {
+  id             String  @id @default(uuid()) @db.Uuid
+  organizationId String  @map("organization_id") @db.Uuid
+  userId         String  @map("user_id") @db.Uuid
+  type           String
+  inApp          Boolean @default(true) @map("in_app")
+  email          Boolean @default(false)
+
+  @@unique([organizationId, userId, type])
+  @@map("notification_preferences")
+}
+
+model ScheduledReport {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  name           String
+  /// daily | weekly (weekday 1-7, Monday = 1)
+  frequency      String
+  weekday        Int?
+  hourLocal      Int       @default(8) @map("hour_local")
+  config         Json
+  recipients     String[]  @default([])
+  active         Boolean   @default(true)
+  lastRunAt      DateTime? @map("last_run_at")
+  lastStatus     String?   @map("last_status")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("scheduled_reports")
+}

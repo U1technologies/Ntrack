@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: ntrack
+          POSTGRES_PASSWORD: ntrack_ci
+          POSTGRES_DB: ntrack_app
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U ntrack" --health-interval 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-retries 10
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://ntrack:ntrack_ci@localhost:5432/ntrack_app?schema=public
+      REDIS_URL: redis://localhost:6379
+      CONSOLE_ORIGIN: http://localhost:3000
+      ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+      TRACKING_HASH_SECRET: ci-only-tracking-hash-secret
+      TRACKER_CNAME_TARGET: edge.ntrack.example
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate --schema packages/db/prisma/schema.prisma
+      - run: npm run typecheck
+      - run: npm test
+      - run: npx prisma migrate deploy --schema packages/db/prisma/schema.prisma
+      - run: npm run test:integration
+      - run: npm run build

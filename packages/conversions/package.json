@@ -1,0 +1,16 @@
+{
+  "name": "@ntrack/conversions",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "dependencies": {
+    "@ntrack/analytics": "*",
+    "@ntrack/db": "*",
+    "@ntrack/notifications": "*",
+    "@ntrack/shared": "*",
+    "bullmq": "^5.0.0",
+    "ioredis": "^5.11.1"
+  }
+}
