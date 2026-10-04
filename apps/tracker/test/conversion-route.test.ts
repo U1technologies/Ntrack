@@ -62,6 +62,20 @@ describe('conversion intake', () => {
     expect(store.conversions[0]).toMatchObject({ source: 's2s', clickId: CLICK, event: 'lead', transactionId: 'ORD-1', saleAmount: '49.90', currency: 'USD', customParams: { plan: 'pro' } });
   });
 
+  it('accepts a Trackier-style postback (/acquisition, security_token, goal_value, sale_amount)', async () => {
+    const response = await app.inject({ method: 'GET', url: `/acquisition?click_id=${CLICK}&security_token=${TOKEN}&goal_value=register&txn_id=ORD-T1&sale_amount=25.50&sub1=abc` });
+    expect(response.statusCode).toBe(202);
+    expect(store.conversions[0]).toMatchObject({ source: 's2s', clickId: CLICK, event: 'register', transactionId: 'ORD-T1', saleAmount: '25.50', customParams: { sub1: 'abc' } });
+    expect(store.conversions[0]?.customParams).not.toHaveProperty('security_token');
+    expect(store.conversions[0]?.customParams).not.toHaveProperty('goal_value');
+  });
+
+  it('refuses a Trackier-style postback with a wrong security_token', async () => {
+    const response = await app.inject({ method: 'GET', url: `/acquisition?click_id=${CLICK}&security_token=wrong-token-123&goal_value=sale&txn_id=ORD-T2` });
+    expect(response.statusCode).toBe(401);
+    expect(store.conversions).toHaveLength(0);
+  });
+
   it('serves the documented public paths (/postback, /pixel, /ntrack.js) like the short ones', async () => {
     expect((await app.inject({ method: 'GET', url: `/postback?click_id=${CLICK}&token=${TOKEN}&event=sale&txn_id=ORD-P` })).statusCode).toBe(202);
     expect((await app.inject({ method: 'POST', url: '/postback', headers: { 'content-type': 'application/json' }, payload: { click_id: CLICK, token: TOKEN, event: 'lead' } })).statusCode).toBe(202);

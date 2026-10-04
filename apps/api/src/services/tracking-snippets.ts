@@ -31,7 +31,7 @@ export const buildTrackingSnippets = (base: string | null, token: string | null,
 
 export const TRACKING_METHOD_NOTES: Record<ConversionTrackingMethod, string> = {
   server_postback: 'Your server calls this URL when an order completes. Most reliable: works without cookies or browser scripts. Keep the token secret.',
-  image_pixel: 'Place on the order confirmation page. Replace {click_id} with the click ID you saved from the landing page URL; without it the pixel relies on a browser cookie that many browsers block.',
+  image_pixel: 'Place on the order confirmation page. Replace {click_id} with the click ID you saved from the landing page URL. Without click_id the pixel only works when the click cookie is turned on (Settings, Tracking, Click cookie days), like a Trackier pixel, and some browsers block that cookie.',
   iframe_pixel: 'Same as the image pixel, for platforms that only accept iframes. Replace {click_id} with the saved click ID.',
   js_tag: 'Add to the landing and confirmation pages. The script remembers the click ID from the landing page URL and sends the conversion when convert() is called.',
 };

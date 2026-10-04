@@ -17,7 +17,9 @@ import { CLICK_COOKIE } from './click';
  * The short paths stay available so snippets already installed by advertisers keep working.
  */
 
-const RESERVED = new Set(['click_id', 'clickid', 'token', 'event', 'goal', 'txn_id', 'transaction_id', 'order_id', 'amount', 'sale_amount', 'currency']);
+// Trackier's names (security_token, goal_value, goal_name, /acquisition) are accepted too, so an
+// advertiser moving from Trackier only has to change the domain of their postback URL.
+const RESERVED = new Set(['click_id', 'clickid', 'token', 'security_token', 'event', 'goal', 'goal_value', 'goal_name', 'txn_id', 'transaction_id', 'order_id', 'amount', 'sale_amount', 'currency']);
 const MAX_CUSTOM_PARAMS = 20;
 const GIF = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
 
@@ -54,7 +56,7 @@ const normalizeAmount = (raw: string | undefined): string | null => {
 const buildIntake = (params: Params, clickId: string, source: ConversionIntake['source']): ConversionIntake => ({
   source,
   clickId,
-  event: normalizeEvent(params.event ?? params.goal),
+  event: normalizeEvent(params.event ?? params.goal ?? params.goal_value ?? params.goal_name),
   transactionId: (params.txn_id ?? params.transaction_id ?? params.order_id ?? '').slice(0, 120),
   saleAmount: normalizeAmount(params.amount ?? params.sale_amount),
   currency: /^[A-Za-z]{3}$/.test(params.currency ?? '') ? params.currency!.toUpperCase() : '',
@@ -88,7 +90,7 @@ export const registerConversionRoutes = (app: FastifyInstance, store: TrackerSto
     const context = await store.getClickContext(clickId);
     if (!context) return reject(reply, 404, 'unknown_or_expired_click');
     const advertiser = await store.getAdvertiser(context.advertiserId);
-    if (!advertiser || advertiser.organizationId !== context.organizationId || !tokenMatches(params.token ?? '', advertiser.postbackTokenHash)) {
+    if (!advertiser || advertiser.organizationId !== context.organizationId || !tokenMatches(params.token ?? params.security_token ?? '', advertiser.postbackTokenHash)) {
       return reject(reply, 401, 'invalid_token');
     }
     if (!advertiser.active) return reject(reply, 403, 'advertiser_inactive');
@@ -97,7 +99,7 @@ export const registerConversionRoutes = (app: FastifyInstance, store: TrackerSto
     return reply.code(202).header('Cache-Control', 'no-store').send({ status: 'accepted', click_id: clickId });
   };
 
-  for (const path of ['/postback', '/pb']) {
+  for (const path of ['/postback', '/pb', '/acquisition']) {
     app.get(path, { logLevel: 'warn' }, handlePostback);
     app.post(path, { logLevel: 'warn' }, handlePostback);
   }
