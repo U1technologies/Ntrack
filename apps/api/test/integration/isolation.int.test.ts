@@ -206,6 +206,20 @@ describe('tenant isolation', () => {
     await deps.prisma.advertiser.delete({ where: { id: advB.body.data.id } }).catch(() => undefined)
   })
 
+  it('reports system status for uptime monitors and turns 503 when the workers stop', async () => {
+    const ok = await request(app).get('/v1/status')
+    expect([200, 503]).toContain(ok.status)
+    expect(Object.keys(ok.body.data.checks).sort()).toEqual(['clickQueue', 'clickhouse', 'database', 'redis', 'workers'])
+    expect(JSON.stringify(ok.body)).not.toMatch(/postgres|redis:\/\/|password/i)
+    const previous = await deps.redis.get(REDIS_KEYS.configSyncedAt)
+    await deps.redis.set(REDIS_KEYS.configSyncedAt, new Date(Date.now() - 60 * 60_000).toISOString())
+    const stale = await request(app).get('/v1/status')
+    expect(stale.status).toBe(503)
+    expect(stale.body.data.checks.workers).toBe('fail')
+    if (previous) await deps.redis.set(REDIS_KEYS.configSyncedAt, previous)
+    else await deps.redis.del(REDIS_KEYS.configSyncedAt)
+  })
+
   it('refuses to switch into an organization the user does not belong to', async () => {
     const adminB = await signIn(`admin-b-${run}@it.test`)
     expect((await adminB.post('/v1/auth/switch-organization', { organizationId: orgA })).status).toBe(404)

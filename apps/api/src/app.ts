@@ -8,6 +8,7 @@ import { csrfProtection } from './middleware/csrf';
 import { errorHandler, notFoundHandler } from './middleware/error-handler';
 import { apiRateLimit } from './middleware/rate-limit';
 import { createV1Router } from './routes';
+import { systemStatus } from './services/system-status';
 import type { AppDeps } from './types';
 
 export const createApp = (deps: AppDeps): Express => {
@@ -26,6 +27,21 @@ export const createApp = (deps: AppDeps): Express => {
 
   app.get('/health', (_req, res) => {
     res.json({ success: true, message: 'ok', data: { service: 'ntrack-api' } });
+  });
+
+  // Public status for uptime monitors (reachable as /ntrack/api/status through the website):
+  // 200 when database, Redis, ClickHouse, workers and the click queue are healthy, 503 otherwise.
+  app.get('/v1/status', async (_req, res, next) => {
+    try {
+      const status = await systemStatus(deps);
+      res.status(status.healthy ? 200 : 503).set('Cache-Control', 'no-store').json({
+        success: status.healthy,
+        message: status.healthy ? 'All systems operational' : 'Degraded',
+        data: { status: status.status, checks: status.checks, checkedAt: status.checkedAt },
+      });
+    } catch (error) {
+      next(error);
+    }
   });
 
   // The console is served from the same site through a rewrite, so no CORS is enabled: other
