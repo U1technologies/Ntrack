@@ -5,6 +5,7 @@ import { AppError } from '../../lib/errors';
 import { paginated } from '../../lib/response';
 import { publisherWhere } from '../../services/access-scope';
 import { writeAudit } from '../../services/audit';
+import { nextSerialNumber } from '../../services/serial-number';
 import type { AppDeps, OrgAuthContext, RequestMeta } from '../../types';
 import type { ListPublishersQuery, PaymentDetails, PublisherBody, PublisherDecisionBody, TaxInfo, UpdatePublisherBody } from './publishers.schemas';
 
@@ -94,7 +95,7 @@ export class PublishersService {
   async create(auth: OrgAuthContext, input: z.infer<typeof PublisherBody>, meta: RequestMeta) {
     const { taxInfo, paymentDetails, ...rest } = input;
     const publisher = await this.deps.prisma.publisher.create({
-      data: { ...rest, ...this.encryptSensitive({ taxInfo, paymentDetails }), publicId: generatePublicId('pub'), organizationId: auth.organizationId },
+      data: { ...rest, ...this.encryptSensitive({ taxInfo, paymentDetails }), publicId: generatePublicId('pub'), number: await nextSerialNumber(this.deps.prisma, auth.organizationId, 'publisher'), organizationId: auth.organizationId },
     });
     await writeAudit(this.deps.prisma, auth, meta, { action: 'publisher.created', entityType: 'publisher', entityId: publisher.id, summary: publisher.companyName, after: publisher });
     return this.present(publisher, false);

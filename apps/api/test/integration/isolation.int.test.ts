@@ -173,6 +173,39 @@ describe('tenant isolation', () => {
     if (viaAdvertiser.status === 200) expect(JSON.stringify(viaAdvertiser.body.data)).not.toContain(realToken)
   })
 
+  it('numbers advertisers, publishers and campaigns 1, 2, 3 per organization and uses the numbers in links', async () => {
+    const adminA = await signIn(`admin-a-${run}@it.test`)
+    const adminB = await signIn(`admin-b-${run}@it.test`)
+    const advA = await deps.prisma.advertiser.findUniqueOrThrow({ where: { id: advertiserA } })
+    const pub1 = await deps.prisma.publisher.findUniqueOrThrow({ where: { id: publisherA1 } })
+    const pub2 = await deps.prisma.publisher.findUniqueOrThrow({ where: { id: publisherA2 } })
+    const campA = await deps.prisma.campaign.findUniqueOrThrow({ where: { id: campaignA } })
+    expect(advA.number).toBe(1)
+    expect([pub1.number, pub2.number]).toEqual([1, 2])
+    expect(campA.number).toBe(1)
+    // Another organization starts its own sequence.
+    const advB = await adminB.post('/v1/advertisers', { companyName: `IT Advertiser B ${run}`, email: 'b-serial@it.test' })
+    expect(advB.status).toBe(201)
+    expect(advB.body.data.number).toBe(1)
+    // A duplicated campaign takes the next number, never the source's.
+    const copy = await adminA.post(`/v1/campaigns/${campaignA}/duplicate`, {})
+    expect(copy.status).toBe(201)
+    expect(copy.body.data.number).toBeGreaterThan(campA.number)
+    // Links show the numbers: /click?campaign_id=1&pub_id=1
+    const domain = await deps.prisma.trackingDomain.create({
+      data: { publicId: `dom_it${run}`.slice(0, 20), organizationId: orgA, hostname: `trk-${run}.it.test`, status: 'active', verificationToken: 'x', verifiedAt: new Date() },
+    })
+    const link = await adminA.post('/v1/links', { campaignId: campaignA, publisherId: publisherA1, domainId: domain.id, sub1: 'fb' })
+    expect(link.status).toBe(201)
+    expect(link.body.data.trackingUrl).toBe(`https://trk-${run}.it.test/click?campaign_id=1&pub_id=1&sub1=fb`)
+    expect(link.body.data.shortUrl).toMatch(new RegExp(`^https://trk-${run}\\.it\\.test/click/[0-9A-Za-z]{10}$`))
+    await deps.prisma.trackingLink.deleteMany({ where: { domainId: domain.id } })
+    await deps.prisma.trackingDomain.delete({ where: { id: domain.id } })
+    await deps.prisma.landingPage.deleteMany({ where: { campaignId: copy.body.data.id } })
+    await deps.prisma.campaign.delete({ where: { id: copy.body.data.id } }).catch(() => undefined)
+    await deps.prisma.advertiser.delete({ where: { id: advB.body.data.id } }).catch(() => undefined)
+  })
+
   it('refuses to switch into an organization the user does not belong to', async () => {
     const adminB = await signIn(`admin-b-${run}@it.test`)
     expect((await adminB.post('/v1/auth/switch-organization', { organizationId: orgA })).status).toBe(404)

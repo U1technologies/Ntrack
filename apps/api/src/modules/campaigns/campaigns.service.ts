@@ -6,6 +6,7 @@ import { paginated } from '../../lib/response';
 import { serialize } from '../../lib/serialize';
 import { assertAdvertiserAccess, campaignWhere, isAdvertiserPortal, isPublisherPortal } from '../../services/access-scope';
 import { writeAudit } from '../../services/audit';
+import { nextSerialNumber } from '../../services/serial-number';
 import { TOKEN_PLACEHOLDER, TRACKING_METHOD_NOTES, TRACKING_SETUP_NOTES, buildTrackingSnippets, canRevealPostbackToken } from '../../services/tracking-snippets';
 import { validateLandingPageTemplate } from '../../services/destination-validation';
 import type { AppDeps, OrgAuthContext, RequestMeta } from '../../types';
@@ -196,6 +197,7 @@ export class CampaignsService {
           ...fields,
           advertiserId,
           publicId: generatePublicId('cmp'),
+          number: await nextSerialNumber(tx, auth.organizationId, 'campaign'),
           organizationId: auth.organizationId,
           status: finalStatus,
           startsAt: toDate(startsAt),
@@ -310,13 +312,14 @@ export class CampaignsService {
   async duplicate(auth: OrgAuthContext, id: string, meta: RequestMeta) {
     await this.findManageable(auth, id);
     const source = await this.prisma.campaign.findUniqueOrThrow({ where: { id }, include: { landingPages: true, payouts: true, domains: true } });
-    const { id: _id, publicId: _p, createdAt: _c, updatedAt: _u, approvedAt: _a, approvedById: _ab, archivedAt: _ar, landingPages, payouts, domains, ...fields } = source;
+    const { id: _id, publicId: _p, number: _n, createdAt: _c, updatedAt: _u, approvedAt: _a, approvedById: _ab, archivedAt: _ar, landingPages, payouts, domains, ...fields } = source;
     const copy = await this.prisma.$transaction(async (tx) => {
       const created = await tx.campaign.create({
         data: {
           ...fields,
           name: `${source.name} (copy)`.slice(0, 160),
           publicId: generatePublicId('cmp'),
+          number: await nextSerialNumber(tx, source.organizationId, 'campaign'),
           status: 'draft',
           createdById: auth.user.id,
           landingPages: {

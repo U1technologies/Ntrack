@@ -160,9 +160,10 @@ export const decideClick = (campaign: CampaignSnapshot, link: LinkSnapshot, fact
 
   const macroValues: MacroValues = {
     click_id: facts.clickId,
-    campaign_id: campaign.publicId,
-    publisher_id: link.publisherPublicId,
-    advertiser_id: campaign.advertiserPublicId,
+    // Serial numbers (like Trackier IDs); older snapshots without them fall back to public IDs.
+    campaign_id: campaign.number ? String(campaign.number) : campaign.publicId,
+    publisher_id: link.publisherNumber ? String(link.publisherNumber) : link.publisherPublicId,
+    advertiser_id: campaign.advertiserNumber ? String(campaign.advertiserNumber) : campaign.advertiserPublicId,
     subid1: subs.sub1,
     subid2: subs.sub2,
     subid3: subs.sub3,

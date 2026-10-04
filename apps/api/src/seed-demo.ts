@@ -1,5 +1,6 @@
 import { generateLinkSlug, generatePublicId, generateSecretToken } from '@ntrack/shared';
 import type { PrismaClient } from '@ntrack/db';
+import { nextSerialNumber } from './services/serial-number';
 
 /**
  * Local preview data. Every record is prefixed "DEMO" so it can never be mistaken for real
@@ -34,7 +35,7 @@ export const seedDemoData = async (prisma: PrismaClient, organizationId: string)
     [
       { companyName: 'DEMO Travel Co', email: 'partners@demo-travel.example', website: 'https://demo-travel.example', country: 'US' },
       { companyName: 'DEMO Fintech', email: 'affiliates@demo-fintech.example', website: 'https://demo-fintech.example', country: 'IN' },
-    ].map((data) => prisma.advertiser.create({ data: { ...data, publicId: generatePublicId('adv'), organizationId, status: 'active' } }))
+    ].map(async (data) => prisma.advertiser.create({ data: { ...data, publicId: generatePublicId('adv'), number: await nextSerialNumber(prisma, organizationId, 'advertiser'), organizationId, status: 'active' } }))
   );
 
   const publishers = await Promise.all(
@@ -42,7 +43,7 @@ export const seedDemoData = async (prisma: PrismaClient, organizationId: string)
       { companyName: 'DEMO Coupon Hub', email: 'team@demo-coupons.example', trafficSources: ['coupon', 'search'] },
       { companyName: 'DEMO Travel Blog', email: 'hello@demo-travelblog.example', trafficSources: ['content', 'social'] },
       { companyName: 'DEMO Cashback App', email: 'ops@demo-cashback.example', trafficSources: ['cashback'] },
-    ].map((data) => prisma.publisher.create({ data: { ...data, publicId: generatePublicId('pub'), organizationId, status: 'active' } }))
+    ].map(async (data) => prisma.publisher.create({ data: { ...data, publicId: generatePublicId('pub'), number: await nextSerialNumber(prisma, organizationId, 'publisher'), organizationId, status: 'active' } }))
   );
 
   const campaigns = [
@@ -55,6 +56,7 @@ export const seedDemoData = async (prisma: PrismaClient, organizationId: string)
     const campaign = await prisma.campaign.create({
       data: {
         publicId: generatePublicId('cmp'),
+        number: await nextSerialNumber(prisma, organizationId, 'campaign'),
         organizationId,
         advertiserId: input.advertiserId,
         name: input.name,

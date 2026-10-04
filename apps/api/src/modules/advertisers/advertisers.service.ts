@@ -7,6 +7,7 @@ import { paginated } from '../../lib/response';
 import { advertiserWhere } from '../../services/access-scope';
 import { TOKEN_PLACEHOLDER, TRACKING_SETUP_NOTES, buildTrackingSnippets, canRevealPostbackToken } from '../../services/tracking-snippets';
 import { writeAudit } from '../../services/audit';
+import { nextSerialNumber } from '../../services/serial-number';
 import type { AppDeps, OrgAuthContext, RequestMeta } from '../../types';
 import type { AdvertiserBody, ListAdvertisersQuery, UpdateAdvertiserBody } from './advertisers.schemas';
 
@@ -58,7 +59,7 @@ export class AdvertisersService {
 
   async create(auth: OrgAuthContext, input: z.infer<typeof AdvertiserBody>, meta: RequestMeta) {
     const advertiser = await this.deps.prisma.advertiser.create({
-      data: { ...input, publicId: generatePublicId('adv'), organizationId: auth.organizationId },
+      data: { ...input, publicId: generatePublicId('adv'), number: await nextSerialNumber(this.deps.prisma, auth.organizationId, 'advertiser'), organizationId: auth.organizationId },
     });
     await writeAudit(this.deps.prisma, auth, meta, { action: 'advertiser.created', entityType: 'advertiser', entityId: advertiser.id, summary: advertiser.companyName, after: advertiser });
     await this.deps.publisher.publishAdvertiser(advertiser.id);

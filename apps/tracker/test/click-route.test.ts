@@ -182,6 +182,7 @@ describe('market-style links: /click?campaign_id=&pub_id= and force_transparent'
     store.links.set('AbCdEf1234', makeLink());
     store.campaigns.set(makeCampaign().campaignId, makeCampaign());
     store.pairs.set(REDIS_KEYS.linkPair(domain.domainId, 'cmp_TEST000001', 'pub_TEST000001'), 'AbCdEf1234');
+    store.pairs.set(REDIS_KEYS.linkPair(domain.domainId, '12', '3'), 'AbCdEf1234');
     app = buildTracker(store, config);
     await app.ready();
   });
@@ -195,9 +196,18 @@ describe('market-style links: /click?campaign_id=&pub_id= and force_transparent'
     expect(response.headers.location).toMatch(/^https:\/\/brand\.com\/offer\?aff=[0-9A-Z]{26}&s1=ads$/);
   });
 
+  it('resolves serial numbers campaign_id=12&pub_id=3 like Trackier IDs', async () => {
+    const response = await click('/click?campaign_id=12&pub_id=3');
+    expect(response.statusCode).toBe(302);
+    expect(response.headers.location).toMatch(/^https:\/\/brand\.com\/offer\?aff=[0-9A-Z]{26}&s1=$/);
+    expect((await click('/click?campaign_id=12&pub_id=4')).statusCode).toBe(404);
+    expect((await click('/click?campaign_id=012&pub_id=3')).statusCode).toBe(404);
+  });
+
   it('returns 404 for an unknown pair, a malformed ID, or another tenant domain', async () => {
     expect((await click('/click?campaign_id=cmp_TEST000001&pub_id=pub_OTHER00001')).statusCode).toBe(404);
     expect((await click('/click?campaign_id=1813&pub_id=1')).statusCode).toBe(404);
+    expect((await click('/click?campaign_id=-1&pub_id=x')).statusCode).toBe(404);
     expect((await click('/click')).statusCode).toBe(404);
   });
 

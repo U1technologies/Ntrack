@@ -24,8 +24,8 @@ import type { TrackerStore } from '../services/tracker-store';
 
 const SLUG_PATTERN = /^[0-9A-Za-z]{6,32}$/;
 export const CLICK_COOKIE = 'ntclk';
-/** Public IDs such as cmp_aB3dE5fG7h and pub_aB3dE5fG7h. */
-const PUBLIC_ID_PATTERN = /^[a-z]{3}_[A-Za-z0-9]{6,32}$/;
+/** Serial numbers (campaign_id=12) or public IDs (cmp_aB3dE5fG7h, pub_aB3dE5fG7h). */
+const ENTITY_REF_PATTERN = /^(?:[1-9][0-9]{0,8}|[a-z]{3}_[A-Za-z0-9]{6,32})$/;
 
 const sendError = (reply: FastifyReply, status: number) =>
   reply
@@ -205,7 +205,7 @@ export const registerClickRoutes = (app: FastifyInstance, store: TrackerStore, c
     const query = request.query as Record<string, unknown>;
     const campaignPublicId = typeof query.campaign_id === 'string' ? query.campaign_id : '';
     const publisherPublicId = typeof query.pub_id === 'string' ? query.pub_id : typeof query.publisher_id === 'string' ? query.publisher_id : '';
-    if (!PUBLIC_ID_PATTERN.test(campaignPublicId) || !PUBLIC_ID_PATTERN.test(publisherPublicId)) return sendError(reply, 404);
+    if (!ENTITY_REF_PATTERN.test(campaignPublicId) || !ENTITY_REF_PATTERN.test(publisherPublicId)) return sendError(reply, 404);
     const host = visitorHost(request, config);
     const hostname = config.devHostOverride && !host.includes('.') ? config.devHostOverride : host;
     const domain = await store.getDomain(hostname);

@@ -111,9 +111,12 @@ export interface CampaignSnapshot {
   v: number;
   campaignId: string;
   publicId: string;
+  /** Serial number within the organization (shown as the campaign ID; optional for older snapshots). */
+  number?: number;
   organizationId: string;
   advertiserId: string;
   advertiserPublicId: string;
+  advertiserNumber?: number;
   status: 'active' | 'paused' | 'pending' | 'archived' | 'draft';
   startsAt: string | null;
   endsAt: string | null;
@@ -168,6 +171,7 @@ export interface LinkSnapshot {
   campaignId: string;
   publisherId: string;
   publisherPublicId: string;
+  publisherNumber?: number;
   active: boolean;
   publisherApproved: boolean;
   /** Overrides the campaign default landing page when set. */
@@ -195,7 +199,8 @@ export const REDIS_KEYS = {
   campaign: (campaignId: string) => `ntrack:cfg:campaign:${campaignId}`,
   link: (slug: string) => `ntrack:cfg:link:${slug}`,
   /** Market-style links (/click?campaign_id=&pub_id=) resolve to the publisher's first active link on that domain. */
-  linkPair: (domainId: string, campaignPublicId: string, publisherPublicId: string) => `ntrack:cfg:pair:${domainId}:${campaignPublicId}:${publisherPublicId}`,
+  /** campaignRef/publisherRef are serial numbers (campaign_id=12) or public IDs (cmp_...); both are indexed. */
+  linkPair: (domainId: string, campaignRef: string, publisherRef: string) => `ntrack:cfg:pair:${domainId}:${campaignRef}:${publisherRef}`,
   /** Click context kept for the attribution window so conversions resolve without a DB query. */
   click: (clickId: string) => `ntrack:click:${clickId}`,
   uniqueClick: (linkId: string, fingerprint: string) => `ntrack:uniq:${linkId}:${fingerprint}`,

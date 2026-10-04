@@ -28,7 +28,7 @@ export * from './budget';
  */
 
 const campaignInclude = {
-  advertiser: { select: { publicId: true } },
+  advertiser: { select: { publicId: true, number: true } },
   landingPages: { where: { active: true }, orderBy: { createdAt: 'asc' } },
   domains: { select: { domainId: true } },
   organization: { include: { settings: true } },
@@ -37,11 +37,12 @@ const campaignInclude = {
 type CampaignWithRelations = Prisma.CampaignGetPayload<{ include: typeof campaignInclude }>;
 
 const linkInclude = {
-  publisher: { select: { publicId: true, status: true } },
+  publisher: { select: { publicId: true, number: true, status: true } },
   landingPage: { select: { publicId: true, active: true } },
   campaign: {
     select: {
       publicId: true,
+      number: true,
       visibility: true,
       publishers: { select: { publisherId: true, status: true } },
     },
@@ -78,9 +79,11 @@ export const buildCampaignSnapshot = (campaign: CampaignWithRelations, budgetExh
     v: SNAPSHOT_VERSION,
     campaignId: campaign.id,
     publicId: campaign.publicId,
+    number: campaign.number,
     organizationId: campaign.organizationId,
     advertiserId: campaign.advertiserId,
     advertiserPublicId: campaign.advertiser.publicId,
+    advertiserNumber: campaign.advertiser.number,
     status: campaign.status,
     startsAt: campaign.startsAt?.toISOString() ?? null,
     endsAt: campaign.endsAt?.toISOString() ?? null,
@@ -132,6 +135,7 @@ export const buildLinkSnapshot = (link: LinkWithRelations): LinkSnapshot => {
     campaignId: link.campaignId,
     publisherId: link.publisherId,
     publisherPublicId: link.publisher.publicId,
+    publisherNumber: link.publisher.number,
     active: link.active,
     publisherApproved: publisherActive && approvedForCampaign,
     landingPageId: link.landingPage?.active ? link.landingPage.publicId : null,
@@ -234,19 +238,24 @@ export class ConfigPublisher {
     const link = await this.db.trackingLink.findUnique({ where: { id: linkId }, include: linkInclude });
     if (!link) return;
     await this.redis.set(REDIS_KEYS.link(link.slug), JSON.stringify(buildLinkSnapshot(link)));
-    await this.refreshLinkPair(link.campaignId, link.publisherId, link.domainId, link.campaign.publicId, link.publisher.publicId);
+    await this.refreshLinkPair(link.campaignId, link.publisherId, link.domainId, [
+      [link.campaign.publicId, link.publisher.publicId],
+      [String(link.campaign.number), String(link.publisher.number)],
+    ]);
   }
 
   /** Points the market-style link for (domain, campaign, publisher) at the oldest active link, or removes it. */
-  async refreshLinkPair(campaignId: string, publisherId: string, domainId: string, campaignPublicId: string, publisherPublicId: string): Promise<void> {
+  async refreshLinkPair(campaignId: string, publisherId: string, domainId: string, refs: Array<[campaignRef: string, publisherRef: string]>): Promise<void> {
     const primary = await this.db.trackingLink.findFirst({
       where: { campaignId, publisherId, domainId, active: true },
       orderBy: { createdAt: 'asc' },
       select: { slug: true },
     });
-    const key = REDIS_KEYS.linkPair(domainId, campaignPublicId, publisherPublicId);
-    if (primary) await this.redis.set(key, primary.slug);
-    else await this.redis.del(key);
+    for (const [campaignRef, publisherRef] of refs) {
+      const key = REDIS_KEYS.linkPair(domainId, campaignRef, publisherRef);
+      if (primary) await this.redis.set(key, primary.slug);
+      else await this.redis.del(key);
+    }
   }
 
   async removeLink(slug: string): Promise<void> {
@@ -314,12 +323,17 @@ export class ConfigPublisher {
     for (const link of await this.db.trackingLink.findMany({
       where: { active: true },
       orderBy: { createdAt: 'asc' },
-      select: { slug: true, domainId: true, campaign: { select: { publicId: true } }, publisher: { select: { publicId: true } } },
+      select: { slug: true, domainId: true, campaign: { select: { publicId: true, number: true } }, publisher: { select: { publicId: true, number: true } } },
     })) {
-      const key = REDIS_KEYS.linkPair(link.domainId, link.campaign.publicId, link.publisher.publicId);
-      if (pairKeys.has(key)) continue;
-      pairKeys.add(key);
-      pairPipeline.set(key, link.slug);
+      const keys = [
+        REDIS_KEYS.linkPair(link.domainId, link.campaign.publicId, link.publisher.publicId),
+        REDIS_KEYS.linkPair(link.domainId, String(link.campaign.number), String(link.publisher.number)),
+      ];
+      if (pairKeys.has(keys[0]!)) continue;
+      for (const key of keys) {
+        pairKeys.add(key);
+        pairPipeline.set(key, link.slug);
+      }
     }
     await pairPipeline.exec();
     const linkSlugs = new Set(

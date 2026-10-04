@@ -11,14 +11,14 @@ export const deliveryMacros = async (prisma: PrismaClient, conversionId: string 
   if (!conversionId) return {};
   const c = await prisma.conversion.findUnique({
     where: { id: conversionId },
-    include: { campaign: { select: { publicId: true } }, publisher: { select: { publicId: true } }, advertiser: { select: { publicId: true } } },
+    include: { campaign: { select: { number: true } }, publisher: { select: { number: true } }, advertiser: { select: { number: true } } },
   });
   if (!c) return {};
   return {
     click_id: c.clickId,
-    campaign_id: c.campaign.publicId,
-    publisher_id: c.publisher.publicId,
-    advertiser_id: c.advertiser.publicId,
+    campaign_id: String(c.campaign.number),
+    publisher_id: String(c.publisher.number),
+    advertiser_id: String(c.advertiser.number),
     subid1: c.sub1,
     subid2: c.sub2,
     subid3: c.sub3,

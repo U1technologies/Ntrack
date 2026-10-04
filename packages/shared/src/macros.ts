@@ -20,9 +20,9 @@ const both: MacroContext[] = ['destination', 'postback'];
 
 export const MACROS: MacroDefinition[] = [
   { name: 'click_id', description: 'Unique NTrack click identifier', example: '01J9Z3QK4T8W2M6N7P5R0S1V2X', contexts: both },
-  { name: 'campaign_id', description: 'Campaign public ID', example: 'cmp_8fK2LmQ1', contexts: both },
-  { name: 'publisher_id', description: 'Publisher public ID', example: 'pub_3TqX9aZ4', contexts: both },
-  { name: 'advertiser_id', description: 'Advertiser public ID', example: 'adv_7HsN2wP0', contexts: both },
+  { name: 'campaign_id', description: 'Campaign ID number', example: '12', contexts: both },
+  { name: 'publisher_id', description: 'Publisher (affiliate) ID number', example: '3', contexts: both },
+  { name: 'advertiser_id', description: 'Advertiser ID number', example: '5', contexts: both },
   { name: 'subid1', description: 'Publisher sub ID 1', example: 'google', contexts: both },
   { name: 'subid2', description: 'Publisher sub ID 2', example: 'campaign01', contexts: both },
   { name: 'subid3', description: 'Publisher sub ID 3', example: 'adgroup7', contexts: both },

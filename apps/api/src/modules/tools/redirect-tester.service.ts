@@ -111,6 +111,9 @@ const TYPE_LABELS: Record<RedirectType, string> = {
  * transparent click tracking as Google Ads expects it. It reports observed behaviour only; it does
  * not and cannot grant Google certification, which comes from Google's own review.
  */
+/** campaign_id / pub_id may be a serial number (12) or a public ID (cmp_...). */
+const refFilter = (value: string | null) => (value && /^[1-9][0-9]{0,8}$/.test(value) ? { number: Number(value) } : { publicId: value ?? '' });
+
 export class RedirectTesterService {
   constructor(private readonly deps: AppDeps) {}
 
@@ -261,8 +264,8 @@ export class RedirectTesterService {
                 organizationId: auth.organizationId,
                 domainId: domain.id,
                 active: true,
-                campaign: { publicId: tracking.searchParams.get('campaign_id') ?? '' },
-                publisher: { publicId: tracking.searchParams.get('pub_id') ?? '' },
+                campaign: refFilter(tracking.searchParams.get('campaign_id')),
+                publisher: refFilter(tracking.searchParams.get('pub_id')),
               },
               orderBy: { createdAt: 'asc' },
               select: { slug: true },

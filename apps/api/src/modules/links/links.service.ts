@@ -9,15 +9,15 @@ import type { AppDeps, OrgAuthContext, RequestMeta } from '../../types';
 import type { BulkLinksBody, CreateLinkBody, ListLinksQuery, TemplateBody, UpdateLinkBody } from './links.schemas';
 
 const linkInclude = {
-  campaign: { select: { id: true, name: true, publicId: true, redirectMode: true, destinationParam: true, status: true } },
-  publisher: { select: { id: true, companyName: true, publicId: true } },
+  campaign: { select: { id: true, name: true, publicId: true, number: true, redirectMode: true, destinationParam: true, status: true } },
+  publisher: { select: { id: true, companyName: true, publicId: true, number: true } },
   domain: { select: { id: true, hostname: true, status: true } },
   landingPage: { select: { id: true, name: true, publicId: true } },
 } satisfies Prisma.TrackingLinkInclude;
 
 type LinkWithRelations = Prisma.TrackingLinkGetPayload<{ include: typeof linkInclude }>;
 
-type UrlCampaign = { publicId: string; redirectMode: string; destinationParam: string };
+type UrlCampaign = { number: number; redirectMode: string; destinationParam: string };
 const PRESET_PARAMS = ['sub1', 'sub2', 'sub3', 'sub4', 'sub5', 'source'] as const;
 
 /** Short link: /click/{slug}. Transparent-mode links include the destination parameter (e.g. Google's {lpurl}). */
@@ -27,17 +27,17 @@ export const buildShortUrl = (link: Pick<TrackingLink, 'slug'>, hostname: string
 };
 
 /**
- * Market-style link (the format networks such as Trackier use): campaign and publisher IDs in the
- * query, the link's saved sub IDs as visible parameters, and for transparent campaigns
+ * Market-style link (the format networks such as Trackier use): campaign and publisher ID numbers in
+ * the query, the link's saved sub IDs as visible parameters, and for transparent campaigns
  * force_transparent=true followed by the transparency parameter.
  */
 export const buildTrackingUrl = (
   link: Partial<Pick<TrackingLink, (typeof PRESET_PARAMS)[number]>>,
   hostname: string,
   campaign: UrlCampaign,
-  publisherPublicId: string
+  publisherNumber: number
 ) => {
-  const params = [`campaign_id=${encodeURIComponent(campaign.publicId)}`, `pub_id=${encodeURIComponent(publisherPublicId)}`];
+  const params = [`campaign_id=${campaign.number}`, `pub_id=${publisherNumber}`];
   for (const key of PRESET_PARAMS) if (link[key]) params.push(`${key}=${encodeURIComponent(link[key] as string)}`);
   if (campaign.redirectMode === 'transparent') params.push('force_transparent=true', `${campaign.destinationParam}={lpurl}`);
   return `https://${hostname}/click?${params.join('&')}`;
@@ -45,7 +45,7 @@ export const buildTrackingUrl = (
 
 const presentLink = (link: LinkWithRelations) => ({
   ...link,
-  trackingUrl: buildTrackingUrl(link, link.domain.hostname, link.campaign, link.publisher.publicId),
+  trackingUrl: buildTrackingUrl(link, link.domain.hostname, link.campaign, link.publisher.number),
   shortUrl: buildShortUrl(link, link.domain.hostname, link.campaign),
 });
 
@@ -102,7 +102,7 @@ export class LinksService {
   async preview(auth: OrgAuthContext, input: LinkInput) {
     const { campaign, domain, publisher, publisherApproved } = await this.resolveContext(auth, input, input.publisherId);
     const page = campaign.landingPages.find((p) => p.id === input.landingPageId) ?? campaign.landingPages.find((p) => p.isDefault) ?? campaign.landingPages[0];
-    const trackingUrl = buildTrackingUrl(input, domain.hostname, campaign, publisher.publicId);
+    const trackingUrl = buildTrackingUrl(input, domain.hostname, campaign, publisher.number);
     if (campaign.redirectMode === 'transparent') {
       return { trackingUrl, destinationPreview: null, publisherApproved, note: 'Transparent mode: the destination is the URL passed in the destination parameter.' };
     }

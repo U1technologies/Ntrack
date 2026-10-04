@@ -277,6 +277,8 @@ enum PaymentTerms {
 model Advertiser {
   id                     String        @id @default(uuid()) @db.Uuid
   publicId               String        @unique @map("public_id")
+  /// Serial number within the organization (1, 2, 3...), used in links and macros like Trackier IDs.
+  number                 Int
   organizationId         String        @map("organization_id") @db.Uuid
   companyName            String        @map("company_name")
   contactName            String        @default("") @map("contact_name")
@@ -307,6 +309,7 @@ model Advertiser {
   managerAssignments ManagerAssignment[]
   trackingDomains    TrackingDomain[]
 
+  @@unique([organizationId, number])
   @@index([organizationId, status])
   @@map("advertisers")
 }
@@ -314,6 +317,8 @@ model Advertiser {
 model Publisher {
   id                      String        @id @default(uuid()) @db.Uuid
   publicId                String        @unique @map("public_id")
+  /// Serial number within the organization (1, 2, 3...), used in links and macros like Trackier IDs.
+  number                  Int
   organizationId          String        @map("organization_id") @db.Uuid
   companyName             String        @map("company_name")
   contactName             String        @default("") @map("contact_name")
@@ -349,6 +354,7 @@ model Publisher {
   publisherPayouts   PublisherPayout[]
   payments           Payment[]
 
+  @@unique([organizationId, number])
   @@index([organizationId, status])
   @@map("publishers")
 }
@@ -411,6 +417,8 @@ enum RedirectResponse {
 model Campaign {
   id                       String             @id @default(uuid()) @db.Uuid
   publicId                 String             @unique @map("public_id")
+  /// Serial number within the organization (1, 2, 3...), used in links and macros like Trackier IDs.
+  number                   Int
   organizationId           String             @map("organization_id") @db.Uuid
   advertiserId             String             @map("advertiser_id") @db.Uuid
   name                     String
@@ -479,6 +487,7 @@ model Campaign {
   conversions   Conversion[]
   postbacks     Postback[]
 
+  @@unique([organizationId, number])
   @@index([organizationId, status])
   @@index([organizationId, advertiserId])
   @@map("campaigns")
@@ -1551,4 +1560,14 @@ model ExternalRef {
   @@unique([organizationId, source, entityType, externalId])
   @@index([organizationId, entityType, entityId])
   @@map("external_refs")
+}
+
+/// Next serial number per organization and entity (advertiser, publisher, campaign).
+model OrganizationCounter {
+  organizationId String @map("organization_id") @db.Uuid
+  entity         String
+  value          Int    @default(0)
+
+  @@id([organizationId, entity])
+  @@map("organization_counters")
 }
