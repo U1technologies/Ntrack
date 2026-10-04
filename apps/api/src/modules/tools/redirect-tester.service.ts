@@ -249,15 +249,46 @@ export class RedirectTesterService {
     const domain = await this.deps.prisma.trackingDomain.findFirst({ where: { organizationId: auth.organizationId, hostname: host } });
     if (!domain) throw AppError.badRequest('The tracking URL must use one of your organization\'s tracking domains');
 
-    const slug = /^\/(?:click|c)\/([0-9A-Za-z]{6,32})\/?$/.exec(tracking.pathname)?.[1] ?? null;
+    const pathSlug = /^\/(?:click|c)\/([0-9A-Za-z]{6,32})\/?$/.exec(tracking.pathname)?.[1] ?? null;
+    // Market-style links (/click?campaign_id=&pub_id=) resolve like the tracker: the publisher's oldest active link.
+    const marketStyle = !pathSlug && /^\/click\/?$/.test(tracking.pathname) && tracking.searchParams.has('campaign_id') && tracking.searchParams.has('pub_id');
+    const slug =
+      pathSlug ??
+      (marketStyle
+        ? ((
+            await this.deps.prisma.trackingLink.findFirst({
+              where: {
+                organizationId: auth.organizationId,
+                domainId: domain.id,
+                active: true,
+                campaign: { publicId: tracking.searchParams.get('campaign_id') ?? '' },
+                publisher: { publicId: tracking.searchParams.get('pub_id') ?? '' },
+              },
+              orderBy: { createdAt: 'asc' },
+              select: { slug: true },
+            })
+          )?.slug ?? null)
+        : null);
     const config = await this.configurationFor(auth, domain.id, slug, input.destinationParam);
-    const transparent = config.redirectMode === 'transparent' || (!config.found && tracking.searchParams.has(config.destinationParam));
+    const forced = tracking.searchParams.get('force_transparent') === 'true' && tracking.searchParams.has(config.destinationParam);
+    const transparent = config.redirectMode === 'transparent' || forced || (!config.found && tracking.searchParams.has(config.destinationParam));
 
     const checks: CompatibilityCheck[] = [];
     const add = (id: string, label: string, status: CheckStatus, detail: string) => checks.push({ id, label, status, detail });
 
     // 1. Tracking URL format and configuration
-    add('url_format', 'Tracking URL format', slug ? 'pass' : 'warn', slug ? 'Matches https://<domain>/click/<link>.' : `Unexpected path "${tracking.pathname}".`);
+    add(
+      'url_format',
+      'Tracking URL format',
+      slug ? 'pass' : 'warn',
+      slug
+        ? marketStyle
+          ? 'Matches https://<domain>/click?campaign_id=<campaign>&pub_id=<publisher>.'
+          : 'Matches https://<domain>/click/<link>.'
+        : marketStyle
+          ? 'No active link for this campaign and publisher on this domain.'
+          : `Unexpected path "${tracking.pathname}".`
+    );
     add(
       'configuration',
       'Configured redirect type',

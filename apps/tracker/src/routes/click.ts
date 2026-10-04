@@ -19,11 +19,13 @@ import { decideClick } from '../services/click-decision';
 import { dayKey } from '../services/day-key';
 import { errorPage } from '../services/error-page';
 import { buildHtmlRedirect } from '../services/html-redirect';
-import { extractRequestFacts, sanitizeReferrer } from '../services/request-facts';
+import { extractRequestFacts, sanitizeReferrer, visitorHost } from '../services/request-facts';
 import type { TrackerStore } from '../services/tracker-store';
 
 const SLUG_PATTERN = /^[0-9A-Za-z]{6,32}$/;
 export const CLICK_COOKIE = 'ntclk';
+/** Public IDs such as cmp_aB3dE5fG7h and pub_aB3dE5fG7h. */
+const PUBLIC_ID_PATTERN = /^[a-z]{3}_[A-Za-z0-9]{6,32}$/;
 
 const sendError = (reply: FastifyReply, status: number) =>
   reply
@@ -37,9 +39,7 @@ const sendError = (reply: FastifyReply, status: number) =>
 export const CLICK_PATHS = ['/click/:slug', '/c/:slug'] as const;
 
 export const registerClickRoutes = (app: FastifyInstance, store: TrackerStore, config: TrackerConfig, datacenter: DatacenterMatcher) => {
-  const handleClick = async (request: FastifyRequest<{ Params: { slug: string } }>, reply: FastifyReply) => {
-    const startedAt = performance.now();
-    const { slug } = request.params;
+  const handleClick = async (request: FastifyRequest, reply: FastifyReply, slug: string, startedAt = performance.now()) => {
     if (!SLUG_PATTERN.test(slug)) return sendError(reply, 404);
 
     const facts = extractRequestFacts(request, config);
@@ -90,8 +90,10 @@ export const registerClickRoutes = (app: FastifyInstance, store: TrackerStore, c
     });
 
     // Defence in depth: config sync already forces 302 for transparent campaigns; check again here.
+    // Destinations taken from the transparency parameter are always a plain 302 (ad platform rules).
+    const transparentHop = decision.kind === 'redirect' && decision.transparent === true;
     const responseType: ClickEvent['responseType'] =
-      decision.kind === 'reject' ? 'error' : campaign.redirectMode === 'transparent' ? 'redirect_302' : (campaign.redirectResponse ?? 'redirect_302');
+      decision.kind === 'reject' ? 'error' : campaign.redirectMode === 'transparent' || transparentHop ? 'redirect_302' : (campaign.redirectResponse ?? 'redirect_302');
     const httpStatus = decision.kind === 'reject' ? decision.status : responseType === 'html_200' ? 200 : 302;
 
     const referrer = campaign.collectReferrer ? sanitizeReferrer(facts.referrer) : { url: '', domain: '' };
@@ -129,7 +131,7 @@ export const registerClickRoutes = (app: FastifyInstance, store: TrackerStore, c
       isUnique: visit.isUnique,
       isValid,
       invalidReason: decision.invalidReason ?? '',
-      redirectMode: campaign.redirectMode,
+      redirectMode: transparentHop ? 'transparent' : campaign.redirectMode,
       responseType,
       httpStatus,
       referrerPolicy: decision.kind === 'reject' ? '' : campaign.referrerPolicy,
@@ -192,5 +194,24 @@ export const registerClickRoutes = (app: FastifyInstance, store: TrackerStore, c
   };
 
   // Per-request access logs are off for the click route (volume); errors are still logged.
-  for (const path of CLICK_PATHS) app.get<{ Params: { slug: string } }>(path, { logLevel: 'error' }, handleClick);
+  for (const path of CLICK_PATHS) {
+    app.get<{ Params: { slug: string } }>(path, { logLevel: 'error' }, (request, reply) => handleClick(request, reply, request.params.slug));
+  }
+
+  // Market-style links: /click?campaign_id=cmp_..&pub_id=pub_.. resolve to that publisher's first
+  // active link on this domain, then follow exactly the same checks as /click/:slug.
+  app.get('/click', { logLevel: 'error' }, async (request, reply) => {
+    const startedAt = performance.now();
+    const query = request.query as Record<string, unknown>;
+    const campaignPublicId = typeof query.campaign_id === 'string' ? query.campaign_id : '';
+    const publisherPublicId = typeof query.pub_id === 'string' ? query.pub_id : typeof query.publisher_id === 'string' ? query.publisher_id : '';
+    if (!PUBLIC_ID_PATTERN.test(campaignPublicId) || !PUBLIC_ID_PATTERN.test(publisherPublicId)) return sendError(reply, 404);
+    const host = visitorHost(request, config);
+    const hostname = config.devHostOverride && !host.includes('.') ? config.devHostOverride : host;
+    const domain = await store.getDomain(hostname);
+    if (!domain || !domain.active) return sendError(reply, 404);
+    const slug = await store.getLinkSlugForPair(domain.domainId, campaignPublicId, publisherPublicId);
+    if (!slug) return sendError(reply, 404);
+    return handleClick(request, reply, slug, startedAt);
+  });
 };

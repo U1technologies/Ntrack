@@ -194,6 +194,8 @@ export const REDIS_KEYS = {
   domain: (hostname: string) => `ntrack:cfg:domain:${hostname.toLowerCase()}`,
   campaign: (campaignId: string) => `ntrack:cfg:campaign:${campaignId}`,
   link: (slug: string) => `ntrack:cfg:link:${slug}`,
+  /** Market-style links (/click?campaign_id=&pub_id=) resolve to the publisher's first active link on that domain. */
+  linkPair: (domainId: string, campaignPublicId: string, publisherPublicId: string) => `ntrack:cfg:pair:${domainId}:${campaignPublicId}:${publisherPublicId}`,
   /** Click context kept for the attribution window so conversions resolve without a DB query. */
   click: (clickId: string) => `ntrack:click:${clickId}`,
   uniqueClick: (linkId: string, fingerprint: string) => `ntrack:uniq:${linkId}:${fingerprint}`,

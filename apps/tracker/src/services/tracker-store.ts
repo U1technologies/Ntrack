@@ -16,6 +16,9 @@ import {
  */
 export interface TrackerStore {
   getDomainAndLink(hostname: string, slug: string): Promise<[DomainSnapshot | null, LinkSnapshot | null]>;
+  getDomain(hostname: string): Promise<DomainSnapshot | null>;
+  /** Slug of the publisher's link for a market-style URL (/click?campaign_id=&pub_id=). */
+  getLinkSlugForPair(domainId: string, campaignPublicId: string, publisherPublicId: string): Promise<string | null>;
   getCampaign(campaignId: string): Promise<CampaignSnapshot | null>;
   /** Marks a visit; returns whether it is the first in the unique window and whether it repeats within the duplicate window. */
   markVisit(linkId: string, fingerprint: string, uniqueTtlSeconds: number, duplicateTtlSeconds: number): Promise<{ isUnique: boolean; isDuplicate: boolean }>;
@@ -48,6 +51,14 @@ export class RedisTrackerStore implements TrackerStore {
 
   async getCampaign(campaignId: string): Promise<CampaignSnapshot | null> {
     return parse<CampaignSnapshot>(await this.redis.get(REDIS_KEYS.campaign(campaignId)));
+  }
+
+  async getDomain(hostname: string): Promise<DomainSnapshot | null> {
+    return parse<DomainSnapshot>(await this.redis.get(REDIS_KEYS.domain(hostname)));
+  }
+
+  async getLinkSlugForPair(domainId: string, campaignPublicId: string, publisherPublicId: string): Promise<string | null> {
+    return this.redis.get(REDIS_KEYS.linkPair(domainId, campaignPublicId, publisherPublicId));
   }
 
   async markVisit(linkId: string, fingerprint: string, uniqueTtlSeconds: number, duplicateTtlSeconds: number) {
@@ -113,6 +124,16 @@ export class MemoryTrackerStore implements TrackerStore {
   readonly contexts = new Map<string, ClickContext>();
   readonly advertisers = new Map<string, AdvertiserSnapshot>();
   readonly conversions: ConversionIntake[] = [];
+
+  readonly pairs = new Map<string, string>();
+
+  async getDomain(hostname: string): Promise<DomainSnapshot | null> {
+    return this.domains.get(hostname) ?? null;
+  }
+
+  async getLinkSlugForPair(domainId: string, campaignPublicId: string, publisherPublicId: string): Promise<string | null> {
+    return this.pairs.get(REDIS_KEYS.linkPair(domainId, campaignPublicId, publisherPublicId)) ?? null;
+  }
 
   async getDomainAndLink(hostname: string, slug: string): Promise<[DomainSnapshot | null, LinkSnapshot | null]> {
     return [this.domains.get(hostname) ?? null, this.links.get(slug) ?? null];

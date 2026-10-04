@@ -41,6 +41,7 @@ const linkInclude = {
   landingPage: { select: { publicId: true, active: true } },
   campaign: {
     select: {
+      publicId: true,
       visibility: true,
       publishers: { select: { publisherId: true, status: true } },
     },
@@ -233,6 +234,19 @@ export class ConfigPublisher {
     const link = await this.db.trackingLink.findUnique({ where: { id: linkId }, include: linkInclude });
     if (!link) return;
     await this.redis.set(REDIS_KEYS.link(link.slug), JSON.stringify(buildLinkSnapshot(link)));
+    await this.refreshLinkPair(link.campaignId, link.publisherId, link.domainId, link.campaign.publicId, link.publisher.publicId);
+  }
+
+  /** Points the market-style link for (domain, campaign, publisher) at the oldest active link, or removes it. */
+  async refreshLinkPair(campaignId: string, publisherId: string, domainId: string, campaignPublicId: string, publisherPublicId: string): Promise<void> {
+    const primary = await this.db.trackingLink.findFirst({
+      where: { campaignId, publisherId, domainId, active: true },
+      orderBy: { createdAt: 'asc' },
+      select: { slug: true },
+    });
+    const key = REDIS_KEYS.linkPair(domainId, campaignPublicId, publisherPublicId);
+    if (primary) await this.redis.set(key, primary.slug);
+    else await this.redis.del(key);
   }
 
   async removeLink(slug: string): Promise<void> {
@@ -294,6 +308,20 @@ export class ConfigPublisher {
     await campaignPipeline.exec();
 
     const links = await this.publishLinksWhere({});
+    // Market-style link index: the oldest active link per (domain, campaign, publisher) wins.
+    const pairKeys = new Set<string>();
+    const pairPipeline = this.redis.pipeline();
+    for (const link of await this.db.trackingLink.findMany({
+      where: { active: true },
+      orderBy: { createdAt: 'asc' },
+      select: { slug: true, domainId: true, campaign: { select: { publicId: true } }, publisher: { select: { publicId: true } } },
+    })) {
+      const key = REDIS_KEYS.linkPair(link.domainId, link.campaign.publicId, link.publisher.publicId);
+      if (pairKeys.has(key)) continue;
+      pairKeys.add(key);
+      pairPipeline.set(key, link.slug);
+    }
+    await pairPipeline.exec();
     const linkSlugs = new Set(
       (await this.db.trackingLink.findMany({ select: { slug: true } })).map((l) => REDIS_KEYS.link(l.slug))
     );
@@ -302,6 +330,7 @@ export class ConfigPublisher {
     removed += await this.removeStale(REDIS_KEYS.domain('*'), domainKeys);
     removed += await this.removeStale(REDIS_KEYS.campaign('*'), campaignKeys);
     removed += await this.removeStale(REDIS_KEYS.link('*'), linkSlugs);
+    removed += await this.removeStale(REDIS_KEYS.linkPair('*', '*', '*'), pairKeys);
     removed += await this.removeStale(REDIS_KEYS.advertiser('*'), advertiserKeys);
     await this.redis.set(REDIS_KEYS.configSyncedAt, new Date().toISOString());
     return { domains: domains.length, advertisers: advertisers.length, campaigns: campaigns.length, links, removed };

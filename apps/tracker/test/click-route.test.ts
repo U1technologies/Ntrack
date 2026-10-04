@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import { DatacenterMatcher } from '@ntrack/shared';
+import { DatacenterMatcher, REDIS_KEYS } from '@ntrack/shared';
 import { buildTracker } from '../src/app';
 import { MemoryTrackerStore } from '../src/services/tracker-store';
 import { makeCampaign, makeDomain, makeLink } from './fixtures';
@@ -168,5 +168,57 @@ describe('clicks forwarded by the website (nextagmedia.com/click via Vercel)', (
     expect(response.statusCode).toBe(302);
     await flush();
     expect(store.events[0]?.ip).not.toBe('not-an-ip');
+  });
+});
+
+describe('market-style links: /click?campaign_id=&pub_id= and force_transparent', () => {
+  let store: MemoryTrackerStore;
+  let app: FastifyInstance;
+  const domain = makeDomain();
+
+  beforeEach(async () => {
+    store = new MemoryTrackerStore();
+    store.domains.set('trk.example.com', domain);
+    store.links.set('AbCdEf1234', makeLink());
+    store.campaigns.set(makeCampaign().campaignId, makeCampaign());
+    store.pairs.set(REDIS_KEYS.linkPair(domain.domainId, 'cmp_TEST000001', 'pub_TEST000001'), 'AbCdEf1234');
+    app = buildTracker(store, config);
+    await app.ready();
+  });
+  afterEach(() => app.close());
+
+  const click = (path: string) => app.inject({ method: 'GET', url: path, headers: { host: 'trk.example.com', 'user-agent': UA, 'cf-ipcountry': 'US', 'cf-connecting-ip': '203.0.113.9' } });
+
+  it('resolves campaign_id and pub_id to the publisher link and redirects like /click/:slug', async () => {
+    const response = await click('/click?campaign_id=cmp_TEST000001&pub_id=pub_TEST000001&sub1=ads');
+    expect(response.statusCode).toBe(302);
+    expect(response.headers.location).toMatch(/^https:\/\/brand\.com\/offer\?aff=[0-9A-Z]{26}&s1=ads$/);
+  });
+
+  it('returns 404 for an unknown pair, a malformed ID, or another tenant domain', async () => {
+    expect((await click('/click?campaign_id=cmp_TEST000001&pub_id=pub_OTHER00001')).statusCode).toBe(404);
+    expect((await click('/click?campaign_id=1813&pub_id=1')).statusCode).toBe(404);
+    expect((await click('/click')).statusCode).toBe(404);
+  });
+
+  it('follows url= with force_transparent=true, as a plain 302, only to allowed hosts', async () => {
+    const ok = await click('/click?force_transparent=true&campaign_id=cmp_TEST000001&pub_id=pub_TEST000001&url=https%3A%2F%2Fbrand.com%2Fsale%3Fgclid%3Dx');
+    expect(ok.statusCode).toBe(302);
+    expect(ok.headers.location).toBe('https://brand.com/sale?gclid=x');
+    const foreign = await click('/click?force_transparent=true&campaign_id=cmp_TEST000001&pub_id=pub_TEST000001&url=https%3A%2F%2Fevil.example%2F');
+    expect(foreign.statusCode).toBe(400);
+    expect(foreign.headers.location).toBeUndefined();
+  });
+
+  it('uses 302 for force_transparent even when the campaign is set to an HTML 200 page', async () => {
+    store.campaigns.set(makeCampaign().campaignId, makeCampaign({ redirectResponse: 'html_200' }));
+    const response = await click('/click/AbCdEf1234?force_transparent=true&url=https%3A%2F%2Fbrand.com%2F');
+    expect(response.statusCode).toBe(302);
+    expect(response.headers.location).toBe('https://brand.com/');
+  });
+
+  it('ignores url= without force_transparent on a standard campaign', async () => {
+    const response = await click('/click/AbCdEf1234?url=https%3A%2F%2Fbrand.com%2Fother');
+    expect(response.headers.location).toMatch(/^https:\/\/brand\.com\/offer/);
   });
 });

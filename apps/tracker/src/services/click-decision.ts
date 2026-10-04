@@ -70,6 +70,8 @@ export type ClickDecision = DecisionAttribution &
         landingPageId: string;
         /** True when the user is sent to the campaign fallback instead of the offer. */
         usedFallback: boolean;
+        /** The destination came from the transparency parameter (transparent campaign or force_transparent=true). */
+        transparent?: boolean;
         invalidReason: InvalidClickReason | null;
       }
     | { kind: 'reject'; status: 400 | 404 | 410; code: RejectCode; invalidReason: InvalidClickReason | null }
@@ -134,7 +136,10 @@ export const decideClick = (campaign: CampaignSnapshot, link: LinkSnapshot, fact
   const trafficReason: InvalidClickReason | null =
     facts.botReason ?? (facts.isDuplicate ? 'duplicate_click' : null) ?? (facts.isDatacenter ? 'datacenter_ip' : null);
 
-  if (campaign.redirectMode === 'transparent') {
+  // force_transparent=true (the market convention, also named in Google's click tracker guidelines)
+  // makes any campaign follow the transparency parameter, still limited to the campaign's allowed hosts.
+  const forcedTransparent = q.force_transparent === 'true' && Boolean(q[campaign.destinationParam]);
+  if (campaign.redirectMode === 'transparent' || forcedTransparent) {
     return decideTransparent(campaign, facts, { subs, externalClickId, blockReason, trafficReason });
   }
 
@@ -228,6 +233,7 @@ const decideTransparent = (
     location,
     landingPageId: '',
     usedFallback: false,
+    transparent: true,
     invalidReason: ctx.blockReason ?? ctx.trafficReason,
     subs: ctx.subs,
     externalClickId: ctx.externalClickId,
