@@ -12,6 +12,9 @@ const TOKEN = 'advertiser-secret-token';
 
 const context: ClickContext = {
   clickId: CLICK,
+  gaid: '',
+  idfa: '',
+  appName: '',
   ts: Date.now(),
   organizationId: ORG,
   campaignId: CAMPAIGN_ID,

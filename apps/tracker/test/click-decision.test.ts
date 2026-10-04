@@ -26,6 +26,19 @@ describe('decideClick: standard mode', () => {
     if (decision.kind === 'redirect') expect(decision.location).toBe('https://brand.com/offer?aff=01J9Z3QK4T8W2M6N7P5R0S1V2X&s1=google');
   });
 
+  it('fills mobile app tokens {gaid}, {idfa} and {app_name} from the click URL', () => {
+    const campaign = makeCampaign({ landingPages: { lp_main: 'https://brand.com/app?g={gaid}&i={idfa}&app={app_name}' }, defaultLandingPageId: 'lp_main' })
+    const decision = decideClick(campaign, makeLink(), facts({ query: { gaid: '38400000-8cf0-11bd-b23e-10b96e40000d', idfa: 'ABCD-1234', app_name: 'com.example.travel' } }))
+    expect(decision.kind === 'redirect' && decision.location).toBe('https://brand.com/app?g=38400000-8cf0-11bd-b23e-10b96e40000d&i=ABCD-1234&app=com.example.travel')
+    expect(decision.subs).toMatchObject({ gaid: '38400000-8cf0-11bd-b23e-10b96e40000d', idfa: 'ABCD-1234', appName: 'com.example.travel' })
+  })
+
+  it('leaves mobile tokens empty for web clicks', () => {
+    const campaign = makeCampaign({ landingPages: { lp_main: 'https://brand.com/app?g={gaid}' }, defaultLandingPageId: 'lp_main' })
+    const decision = decideClick(campaign, makeLink(), facts())
+    expect(decision.kind === 'redirect' && decision.location).toBe('https://brand.com/app?g=')
+  })
+
   it('uses link presets over URL parameters so attribution cannot be edited in the URL', () => {
     const decision = decideClick(makeCampaign(), makeLink({ presets: { sub1: 'saved' } }), facts({ query: { sub1: 'edited' } }));
     expect(decision.kind === 'redirect' && decision.subs.sub1).toBe('saved');

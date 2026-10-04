@@ -5,6 +5,7 @@ import { sha256 } from '../../lib/crypto';
 import { AppError } from '../../lib/errors';
 import { paginated } from '../../lib/response';
 import { advertiserWhere } from '../../services/access-scope';
+import { TOKEN_PLACEHOLDER, TRACKING_SETUP_NOTES, buildTrackingSnippets, canRevealPostbackToken } from '../../services/tracking-snippets';
 import { writeAudit } from '../../services/audit';
 import type { AppDeps, OrgAuthContext, RequestMeta } from '../../types';
 import type { AdvertiserBody, ListAdvertisersQuery, UpdateAdvertiserBody } from './advertisers.schemas';
@@ -92,21 +93,19 @@ export class AdvertisersService {
     const domain =
       (await this.deps.prisma.trackingDomain.findFirst({ where: { organizationId: auth.organizationId, status: 'active', advertiserId: id } })) ??
       (await this.deps.prisma.trackingDomain.findFirst({ where: { organizationId: auth.organizationId, status: 'active' }, orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }] }));
-    const token = advertiser.postbackTokenEncrypted ? this.deps.secretBox.decrypt(advertiser.postbackTokenEncrypted) : null;
+    const stored = advertiser.postbackTokenEncrypted ? this.deps.secretBox.decrypt(advertiser.postbackTokenEncrypted) : null;
+    // View-only roles (e.g. analysts) see the setup without the secret token.
+    const token = stored && !canRevealPostbackToken(auth.permissions) ? TOKEN_PLACEHOLDER : stored;
     const base = domain ? `https://${domain.hostname}` : null;
+    const snippets = buildTrackingSnippets(base, token);
     return {
       domain: domain?.hostname ?? null,
       token,
-      s2sUrl: base && token ? `${base}/postback?click_id={click_id}&token=${token}&event=sale&txn_id={order_id}&amount={order_total}&currency=USD` : null,
-      pixelHtml: base ? `<img src="${base}/pixel?event=sale&txn_id={order_id}&amount={order_total}" width="1" height="1" alt="" style="display:none" referrerpolicy="no-referrer">` : null,
-      javascript: base
-        ? `<script src="${base}/ntrack.js" async></script>\n<script>\n  // On the thank-you page, after the script loads:\n  window.ntrack && window.ntrack.convert({ event: 'sale', txn_id: 'ORDER_ID', amount: '49.90', currency: 'USD' });\n</script>`
-        : null,
-      notes: [
-        'Pass the NTrack click ID to your site: add {click_id} to the landing page URL (e.g. ?aff_click={click_id}) and store it with the order.',
-        'Server-to-server postbacks are the most reliable method; pixels depend on the browser and cookie settings.',
-        'Send a unique txn_id per order so retries and duplicate postbacks are ignored.',
-      ],
+      s2sUrl: snippets.server_postback,
+      pixelHtml: snippets.image_pixel,
+      iframeHtml: snippets.iframe_pixel,
+      javascript: snippets.js_tag,
+      notes: [...TRACKING_SETUP_NOTES, 'Server-to-server postbacks are the most reliable method; pixels depend on the browser and cookie settings.'],
     };
   }
 

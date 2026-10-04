@@ -22,6 +22,9 @@ export interface ClickRow {
   sub4: string;
   sub5: string;
   source: string;
+  gaid: string;
+  idfa: string;
+  app_name: string;
   external_click_id: string;
   utm_source: string;
   utm_medium: string;
@@ -70,6 +73,10 @@ export const toClickRow = (event: ClickEvent, enrichment: ClickEnrichment): Clic
   sub4: event.sub4,
   sub5: event.sub5,
   source: event.source,
+  // Events queued before mobile IDs existed have no such fields.
+  gaid: event.gaid ?? '',
+  idfa: event.idfa ?? '',
+  app_name: event.appName ?? '',
   external_click_id: event.externalClickId,
   utm_source: event.utmSource,
   utm_medium: event.utmMedium,

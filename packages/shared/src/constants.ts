@@ -30,6 +30,10 @@ export type CampaignStatus = (typeof CAMPAIGN_STATUSES)[number];
 export const ATTRIBUTION_MODELS = ['last_click', 'first_click', 'last_non_direct', 'position_based', 'time_decay'] as const;
 export type AttributionModel = (typeof ATTRIBUTION_MODELS)[number];
 
+/** How the advertiser reports conversions for a campaign (decides which code the campaign page shows). */
+export const CONVERSION_TRACKING_METHODS = ['server_postback', 'image_pixel', 'iframe_pixel', 'js_tag'] as const;
+export type ConversionTrackingMethod = (typeof CONVERSION_TRACKING_METHODS)[number];
+
 export const CONVERSION_EVENTS = [
   'lead',
   'sale',

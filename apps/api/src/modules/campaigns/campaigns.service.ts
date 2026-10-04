@@ -1,11 +1,12 @@
 import type { z } from 'zod';
 import type { Campaign, Prisma } from '@ntrack/db';
-import { effectiveRedirectResponse, effectiveReferrerPolicy, generatePublicId, redirectTypeOf } from '@ntrack/shared';
+import { effectiveRedirectResponse, effectiveReferrerPolicy, generatePublicId, redirectTypeOf, type ConversionTrackingMethod } from '@ntrack/shared';
 import { AppError } from '../../lib/errors';
 import { paginated } from '../../lib/response';
 import { serialize } from '../../lib/serialize';
 import { assertAdvertiserAccess, campaignWhere, isAdvertiserPortal, isPublisherPortal } from '../../services/access-scope';
 import { writeAudit } from '../../services/audit';
+import { TOKEN_PLACEHOLDER, TRACKING_METHOD_NOTES, TRACKING_SETUP_NOTES, buildTrackingSnippets, canRevealPostbackToken } from '../../services/tracking-snippets';
 import { validateLandingPageTemplate } from '../../services/destination-validation';
 import type { AppDeps, OrgAuthContext, RequestMeta } from '../../types';
 import {
@@ -102,6 +103,37 @@ export class CampaignsService {
     await this.findAccessible(auth, id);
     const campaign = await this.prisma.campaign.findUniqueOrThrow({ where: { id }, include: detailInclude });
     return { ...presentCampaign(campaign, auth), effectiveRedirect: await this.effectiveRedirect(campaign) };
+  }
+
+  /**
+   * Conversion code for this campaign's tracking method (and the other methods, so the page can
+   * switch). Uses the campaign's own tracking domain when it has one, else the advertiser's or the
+   * organization default, and the advertiser's postback token.
+   */
+  async trackingSetup(auth: OrgAuthContext, id: string) {
+    await this.findAccessible(auth, id);
+    const campaign = await this.prisma.campaign.findUniqueOrThrow({
+      where: { id },
+      select: { conversionTracking: true, conversionGoal: true, currency: true, advertiserId: true, domains: { select: { domain: { select: { hostname: true, status: true } } } } },
+    });
+    const advertiser = await this.prisma.advertiser.findUniqueOrThrow({ where: { id: campaign.advertiserId }, select: { postbackTokenEncrypted: true } });
+    const ownDomain = campaign.domains.map((d) => d.domain).find((d) => d.status === 'active');
+    const domain =
+      ownDomain ??
+      (await this.prisma.trackingDomain.findFirst({ where: { organizationId: auth.organizationId, status: 'active', advertiserId: campaign.advertiserId } })) ??
+      (await this.prisma.trackingDomain.findFirst({ where: { organizationId: auth.organizationId, status: 'active' }, orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }] }));
+    const stored = advertiser.postbackTokenEncrypted ? this.deps.secretBox.decrypt(advertiser.postbackTokenEncrypted) : null;
+    const tokenVisible = canRevealPostbackToken(auth.permissions);
+    const token = stored && !tokenVisible ? TOKEN_PLACEHOLDER : stored;
+    const method = campaign.conversionTracking as ConversionTrackingMethod;
+    return {
+      method,
+      domain: domain?.hostname ?? null,
+      tokenVisible,
+      snippets: buildTrackingSnippets(domain ? `https://${domain.hostname}` : null, token, campaign.conversionGoal, campaign.currency),
+      methodNotes: TRACKING_METHOD_NOTES,
+      notes: TRACKING_SETUP_NOTES,
+    };
   }
 
   /**

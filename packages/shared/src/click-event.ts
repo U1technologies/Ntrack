@@ -21,6 +21,10 @@ export interface ClickEvent {
   sub4: string;
   sub5: string;
   source: string;
+  /** Mobile app identifiers passed in on the click (empty for web traffic). */
+  gaid: string;
+  idfa: string;
+  appName: string;
   externalClickId: string;
   utmSource: string;
   utmMedium: string;
@@ -67,6 +71,9 @@ export interface ClickContext {
   sub4: string;
   sub5: string;
   source: string;
+  gaid: string;
+  idfa: string;
+  appName: string;
   country: string;
   deviceType: DeviceType;
   externalClickId: string;

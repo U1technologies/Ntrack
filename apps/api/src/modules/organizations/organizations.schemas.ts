@@ -52,6 +52,9 @@ export const UpdateSettingsBody = z
         externalClickId: paramName,
         landingPage: paramName,
         deepLink: paramName,
+        gaid: paramName,
+        idfa: paramName,
+        appName: paramName,
       })
       .refine((map) => new Set(Object.values(map)).size === Object.values(map).length, 'Parameter names must be unique'),
   })

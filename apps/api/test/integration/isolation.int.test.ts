@@ -133,6 +133,46 @@ describe('tenant isolation', () => {
     expect(list.body.data.items.map((c: { id: string }) => c.id)).not.toContain(campaignA)
   })
 
+  it('saves the conversion tracking method, accepts mobile tokens and returns matching code for the campaign page', async () => {
+    const adminA = await signIn(`admin-a-${run}@it.test`)
+    const created = await adminA.post('/v1/campaigns', {
+      name: 'IT App Campaign',
+      advertiserId: advertiserA,
+      category: 'Travel',
+      conversionTracking: 'iframe_pixel',
+      landingPages: [{ name: 'App', url: 'https://brand.example.com/app?c={click_id}&g={gaid}&i={idfa}&a={app_name}', isDefault: true }],
+    })
+    expect(created.status).toBe(201)
+    expect(created.body.data.conversionTracking).toBe('iframe_pixel')
+    const setup = await adminA.get(`/v1/campaigns/${created.body.data.id}/tracking-setup`)
+    expect(setup.status).toBe(200)
+    expect(setup.body.data.method).toBe('iframe_pixel')
+    expect(Object.keys(setup.body.data.snippets).sort()).toEqual(['iframe_pixel', 'image_pixel', 'js_tag', 'server_postback'])
+    if (setup.body.data.domain) expect(setup.body.data.snippets.iframe_pixel).toContain('<iframe')
+    const macros = await adminA.get('/v1/campaigns/macros')
+    expect(macros.body.data.map((m: { name: string }) => m.name)).toEqual(expect.arrayContaining(['click_id', 'gaid', 'idfa', 'app_name']))
+    expect((await adminA.patch(`/v1/campaigns/${created.body.data.id}`, { conversionTracking: 'fax' })).status).toBe(400)
+    // Clean up: nothing references this campaign.
+    await deps.prisma.landingPage.deleteMany({ where: { campaignId: created.body.data.id } })
+    await deps.prisma.campaign.delete({ where: { id: created.body.data.id } }).catch(() => undefined)
+  })
+
+  it('keeps the advertiser postback token out of reach of view-only roles', async () => {
+    const analyst = `analyst-setup-${run}@it.test`
+    await createUser(orgA, 'analyst', analyst)
+    const session = await signIn(analyst)
+    const admin = await signIn(`admin-a-${run}@it.test`)
+    let realToken = (await admin.get(`/v1/advertisers/${advertiserA}/tracking-setup`)).body.data.token
+    if (!realToken) realToken = (await admin.post(`/v1/advertisers/${advertiserA}/postback-token`, {})).body.data.token
+    const viaCampaign = await session.get(`/v1/campaigns/${campaignA}/tracking-setup`)
+    expect(viaCampaign.status).toBe(200)
+    expect(viaCampaign.body.data.tokenVisible).toBe(false)
+    expect(realToken).toBeTruthy()
+    expect(JSON.stringify(viaCampaign.body.data)).not.toContain(realToken)
+    const viaAdvertiser = await session.get(`/v1/advertisers/${advertiserA}/tracking-setup`)
+    if (viaAdvertiser.status === 200) expect(JSON.stringify(viaAdvertiser.body.data)).not.toContain(realToken)
+  })
+
   it('refuses to switch into an organization the user does not belong to', async () => {
     const adminB = await signIn(`admin-b-${run}@it.test`)
     expect((await adminB.post('/v1/auth/switch-organization', { organizationId: orgA })).status).toBe(404)
@@ -249,6 +289,9 @@ describe('conversions', () => {
     const clickId = generateClickId()
     const context: ClickContext = {
       clickId,
+      gaid: '',
+      idfa: '',
+      appName: '',
       ts: Date.now() - 60_000,
       organizationId: orgA,
       campaignId: campaignA,

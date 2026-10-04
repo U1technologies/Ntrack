@@ -431,6 +431,8 @@ model Campaign {
   allowedTrafficTypes      String[]           @default([]) @map("allowed_traffic_types")
   restrictedTrafficTypes   String[]           @default([]) @map("restricted_traffic_types")
   conversionGoal           String             @default("sale") @map("conversion_goal")
+  /// server_postback | image_pixel | iframe_pixel | js_tag: which conversion code the campaign page shows.
+  conversionTracking       String             @default("server_postback") @map("conversion_tracking")
   attributionModel         String             @default("last_click") @map("attribution_model")
   attributionWindowHours   Int                @default(720) @map("attribution_window_hours")
   payoutModel              PayoutModel        @default(CPA) @map("payout_model")
@@ -742,6 +744,9 @@ model Conversion {
   sub4             String           @default("")
   sub5             String           @default("")
   trafficSource    String           @default("") @map("traffic_source")
+  gaid             String           @default("")
+  idfa             String           @default("")
+  appName          String           @default("") @map("app_name")
   country          String           @default("")
   deviceType       String           @default("") @map("device_type")
   customParams     Json             @default("{}") @map("custom_params")

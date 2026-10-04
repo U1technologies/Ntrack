@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
-import { CAMPAIGN_CATEGORIES } from '@ntrack/shared';
+import { CAMPAIGN_CATEGORIES, MACROS } from '@ntrack/shared';
 import { created, ok } from '../../lib/response';
 import { orgAuth, param, requestMeta } from '../../lib/request';
 import { parse } from '../../lib/validate';
@@ -51,9 +51,17 @@ export const createCampaignsRouter = (deps: AppDeps) => {
     ok(res, await campaigns.bulk(orgAuth(req), parse(BulkBody, req.body), requestMeta(req)), 'Campaigns updated')
   );
 
+  // Tokens allowed in landing page URLs, with what each one is replaced by.
+  router.get('/macros', ...orgRoute('campaigns.view'), (_req: Request, res: Response) =>
+    ok(res, MACROS.filter((m) => m.contexts.includes('destination')).map(({ name, description, example }) => ({ name, description, example })))
+  );
   router.get('/', ...orgRoute('campaigns.view'), async (req: Request, res: Response) => ok(res, await campaigns.list(orgAuth(req), parse(ListCampaignsQuery, req.query))));
   router.post('/', ...orgRoute('campaigns.manage'), async (req: Request, res: Response) =>
     created(res, await campaigns.create(orgAuth(req), parse(CreateCampaignBody, req.body), requestMeta(req)), 'Campaign created')
+  );
+  // The advertiser's postback token is replaced by a placeholder unless the user manages advertisers or postbacks.
+  router.get('/:id/tracking-setup', ...orgRoute('campaigns.view'), async (req: Request, res: Response) =>
+    ok(res, await campaigns.trackingSetup(orgAuth(req), param(req, 'id')))
   );
   router.get('/:id', ...orgRoute('campaigns.view'), async (req: Request, res: Response) => ok(res, await campaigns.get(orgAuth(req), param(req, 'id'))));
   router.patch('/:id', ...orgRoute('campaigns.manage'), async (req: Request, res: Response) =>

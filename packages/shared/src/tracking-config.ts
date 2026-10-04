@@ -78,6 +78,10 @@ export interface TrackingParamMap {
   externalClickId: string;
   landingPage: string;
   deepLink: string;
+  /** Mobile app parameters (Android advertising ID, iOS IDFA, app name). */
+  gaid: string;
+  idfa: string;
+  appName: string;
 }
 
 export const DEFAULT_PARAM_MAP: TrackingParamMap = {
@@ -90,6 +94,9 @@ export const DEFAULT_PARAM_MAP: TrackingParamMap = {
   externalClickId: 'ext_click_id',
   landingPage: 'lp',
   deepLink: 'dl',
+  gaid: 'gaid',
+  idfa: 'idfa',
+  appName: 'app_name',
 };
 
 export interface DomainSnapshot {

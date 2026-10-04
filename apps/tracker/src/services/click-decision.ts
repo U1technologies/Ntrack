@@ -52,6 +52,9 @@ export interface ClickSubs {
   sub4: string;
   sub5: string;
   source: string;
+  gaid: string;
+  idfa: string;
+  appName: string;
 }
 
 interface DecisionAttribution {
@@ -120,6 +123,10 @@ export const decideClick = (campaign: CampaignSnapshot, link: LinkSnapshot, fact
     sub4: clean(link.presets.sub4 ?? q[paramMap.sub4]),
     sub5: clean(link.presets.sub5 ?? q[paramMap.sub5]),
     source: clean(link.presets.source ?? q[paramMap.source]),
+    // Mobile app identifiers come only from the click URL (never from link presets).
+    gaid: clean(q[paramMap.gaid ?? 'gaid']),
+    idfa: clean(q[paramMap.idfa ?? 'idfa']),
+    appName: clean(q[paramMap.appName ?? 'app_name']),
   };
   const externalClickId = clean(q[paramMap.externalClickId] ?? q.gclid ?? q.msclkid ?? q.fbclid);
 
@@ -157,6 +164,9 @@ export const decideClick = (campaign: CampaignSnapshot, link: LinkSnapshot, fact
     subid4: subs.sub4,
     subid5: subs.sub5,
     source: subs.source,
+    gaid: subs.gaid,
+    idfa: subs.idfa,
+    app_name: subs.appName,
     country: facts.country,
     device: facts.deviceType,
     timestamp: Math.floor(facts.now / 1000),
