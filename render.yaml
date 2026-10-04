@@ -5,7 +5,7 @@
 #   ntrack-api        Express API (console sign-in, campaigns, reports)  -> nextagmedia.com/ntrack/api
 #   ntrack-tracker    Fastify tracker (clicks, postbacks, pixel)          -> nextagmedia.com/click
 #   ntrack-workers    BullMQ/stream workers (click storage, postbacks, config sync)
-#   ntrack-clickhouse ClickHouse for click and conversion events (private, persistent disk)
+#   ntrack-analytics  ClickHouse for click and conversion events (private, persistent disk)
 #   ntrack-db         PostgreSQL 17
 #   ntrack-redis      Key Value (Redis-compatible), noeviction so queued jobs are never dropped
 #
@@ -68,14 +68,14 @@ services:
     ipAllowList: []
 
   - type: pserv
-    name: ntrack-clickhouse
-    runtime: image
-    image:
-      url: docker.io/clickhouse/clickhouse-server:25.8
+    name: ntrack-analytics
+    runtime: docker
+    dockerfilePath: ./infra/clickhouse/Dockerfile
+    dockerContext: ./infra/clickhouse
     plan: standard
     region: singapore
     disk:
-      name: clickhouse-data
+      name: analytics-data
       mountPath: /var/lib/clickhouse
       sizeGB: 20
     envVars:
@@ -83,8 +83,7 @@ services:
         value: default
       - key: CLICKHOUSE_PASSWORD
         generateValue: true
-      - key: CLICKHOUSE_DB
-        value: ntrack
+      # No CLICKHOUSE_DB: the API's deploy step creates the database (see infra/clickhouse/Dockerfile).
 
   - type: web
     name: ntrack-api
@@ -118,12 +117,12 @@ services:
       - key: CLICKHOUSE_URL
         fromService:
           type: pserv
-          name: ntrack-clickhouse
+          name: ntrack-analytics
           property: hostport
       - key: CLICKHOUSE_PASSWORD
         fromService:
           type: pserv
-          name: ntrack-clickhouse
+          name: ntrack-analytics
           envVarKey: CLICKHOUSE_PASSWORD
       # Shown in the console's DNS instructions for customer domains. nextagmedia.com is
       # verified through its forwarded https://nextagmedia.com/.well-known/ntrack instead.
@@ -185,10 +184,10 @@ services:
       - key: CLICKHOUSE_URL
         fromService:
           type: pserv
-          name: ntrack-clickhouse
+          name: ntrack-analytics
           property: hostport
       - key: CLICKHOUSE_PASSWORD
         fromService:
           type: pserv
-          name: ntrack-clickhouse
+          name: ntrack-analytics
           envVarKey: CLICKHOUSE_PASSWORD

@@ -1,0 +1,13 @@
+<clickhouse>
+    <!-- Log to stdout/stderr so errors show in the Render log instead of files on the disk. -->
+    <logger>
+        <level>information</level>
+        <console>1</console>
+        <log remove="remove"/>
+        <errorlog remove="remove"/>
+    </logger>
+    <!-- Sized for a 2 GB instance. -->
+    <max_server_memory_usage_to_ram_ratio>0.75</max_server_memory_usage_to_ram_ratio>
+    <mark_cache_size>268435456</mark_cache_size>
+    <uncompressed_cache_size>0</uncompressed_cache_size>
+</clickhouse>
