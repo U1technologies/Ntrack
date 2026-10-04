@@ -72,6 +72,17 @@ export const ClickLogQuery = DateRangeQuery.extend({
   country: z.string().trim().max(2).optional(),
   onlyInvalid: z.enum(['true', 'false']).optional(),
   responseType: z.enum(['redirect_302', 'html_200', 'error']).optional(),
+  advertiserId: z.string().uuid().optional(),
+  device: z.string().trim().max(20).optional(),
+  os: z.string().trim().max(40).optional(),
+  browser: z.string().trim().max(40).optional(),
+  source: z.string().trim().max(255).optional(),
+  sub1: z.string().trim().max(255).optional(),
+  sub2: z.string().trim().max(255).optional(),
+  sub3: z.string().trim().max(255).optional(),
+  sub4: z.string().trim().max(255).optional(),
+  sub5: z.string().trim().max(255).optional(),
+  invalidReason: z.string().trim().max(60).optional(),
 });
 
 export class AnalyticsService {
@@ -226,6 +237,11 @@ export class AnalyticsService {
     if (query.domainId) filters.domain = [query.domainId];
     if (query.country) filters.country = [query.country.toUpperCase()];
     if (query.responseType) filters.response_type = [query.responseType];
+    if (query.advertiserId) filters.advertiser = [query.advertiserId];
+    for (const key of ['device', 'os', 'browser', 'source', 'sub1', 'sub2', 'sub3', 'sub4', 'sub5'] as const) {
+      if (query[key]) filters[key] = [query[key]!];
+    }
+    if (query.invalidReason) filters.invalid_reason = [query.invalidReason];
     const { rows, total } = await runClickLog<Row>(this.deps.clickhouse, {
       scope: analyticsScope(auth),
       from: range.from,

@@ -13,6 +13,9 @@ export const DateRangeQuery = z.object({
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   timezone: z.string().max(64).optional(),
+  /** Optional time of day (HH:MM, local) for the start of the first day and the end of the last day (inclusive minute). */
+  fromTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use HH:MM').optional(),
+  toTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use HH:MM').optional(),
 });
 export type DateRangeQuery = z.infer<typeof DateRangeQuery>;
 
@@ -78,9 +81,16 @@ export const resolveDateRange = (query: DateRangeQuery, fallbackTimezone: string
   if (fromDay > toDay) throw AppError.badRequest('The start date must be before the end date');
   const days = Math.round((Date.parse(toDay) - Date.parse(fromDay)) / 86_400_000) + 1;
   if (days > 400) throw AppError.badRequest('Ranges are limited to 400 days');
+  // Times are offsets from local midnight; on a daylight-saving change day they can be off by the shift.
+  const minutes = (time: string) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
+  const from = new Date(zonedMidnight(fromDay, timezone).getTime() + (query.fromTime ? minutes(query.fromTime) * 60_000 : 0));
+  const to = query.toTime
+    ? new Date(zonedMidnight(toDay, timezone).getTime() + (minutes(query.toTime) + 1) * 60_000)
+    : zonedMidnight(addDays(toDay, 1), timezone);
+  if (to <= from) throw AppError.badRequest('The end time must be after the start time');
   return {
-    from: zonedMidnight(fromDay, timezone).toISOString(),
-    to: zonedMidnight(addDays(toDay, 1), timezone).toISOString(),
+    from: from.toISOString(),
+    to: to.toISOString(),
     fromDay,
     toDay,
     timezone,

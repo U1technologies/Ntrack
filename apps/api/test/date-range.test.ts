@@ -35,3 +35,20 @@ describe('zonedMidnight', () => {
     expect(zonedMidnight('2026-03-09', 'America/Los_Angeles').toISOString()).toBe('2026-03-09T07:00:00.000Z');
   });
 });
+
+describe('resolveDateRange: time of day', () => {
+  const now = new Date('2026-10-05T06:00:00Z')
+  it('narrows a single day to a local time window (end minute inclusive)', () => {
+    const range = resolveDateRange({ preset: 'custom', from: '2026-10-04', to: '2026-10-04', fromTime: '10:00', toTime: '13:59', timezone: 'Asia/Kolkata' }, 'UTC', now)
+    expect(range.from).toBe('2026-10-04T04:30:00.000Z')
+    expect(range.to).toBe('2026-10-04T08:30:00.000Z')
+  })
+  it('applies the start time to the first day and the end time to the last day of a preset', () => {
+    const range = resolveDateRange({ preset: 'yesterday', fromTime: '09:30', timezone: 'UTC' }, 'UTC', now)
+    expect(range.from).toBe('2026-10-04T09:30:00.000Z')
+    expect(range.to).toBe('2026-10-05T00:00:00.000Z')
+  })
+  it('rejects an end time before the start time', () => {
+    expect(() => resolveDateRange({ preset: 'today', fromTime: '12:00', toTime: '11:00', timezone: 'UTC' }, 'UTC', now)).toThrow(/end time/)
+  })
+})
