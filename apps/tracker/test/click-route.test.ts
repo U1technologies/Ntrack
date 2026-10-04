@@ -5,7 +5,7 @@ import { buildTracker } from '../src/app';
 import { MemoryTrackerStore } from '../src/services/tracker-store';
 import { makeCampaign, makeDomain, makeLink } from './fixtures';
 
-const config = { port: 0, redisUrl: '', hashSecret: 'test-secret', trustProxy: true, devHostOverride: '', logLevel: 'silent', datacenterRangesFile: '' };
+const config = { port: 0, redisUrl: '', hashSecret: 'test-secret', trustProxy: true, proxySecret: '', devHostOverride: '', logLevel: 'silent', datacenterRangesFile: '' };
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 Chrome/128 Safari/537.36';
 
 describe('GET /c/:slug', () => {
@@ -115,5 +115,58 @@ describe('GET /c/:slug', () => {
     expect(response.headers.location).toContain('https://brand.com/offer');
     await flush();
     expect(store.events[0]).toMatchObject({ isValid: false, invalidReason: 'datacenter_ip' });
+  });
+});
+
+describe('clicks forwarded by the website (nextagmedia.com/click via Vercel)', () => {
+  const SECRET = 'a'.repeat(64);
+  const proxied = { ...config, trustProxy: false, proxySecret: SECRET };
+  let store: MemoryTrackerStore;
+  let app: FastifyInstance;
+
+  beforeEach(async () => {
+    store = new MemoryTrackerStore();
+    store.domains.set('nextagmedia.com', makeDomain({ hostname: 'nextagmedia.com' }));
+    store.links.set('AbCdEf1234', makeLink());
+    store.campaigns.set(makeCampaign().campaignId, makeCampaign());
+    app = buildTracker(store, proxied);
+    await app.ready();
+  });
+  afterEach(() => app.close());
+
+  const forwarded = (headers: Record<string, string>) =>
+    app.inject({
+      method: 'GET',
+      url: '/click/AbCdEf1234?sub1=ads',
+      headers: {
+        host: 'ntrack-tracker.onrender.com',
+        'user-agent': UA,
+        'x-ntrack-host': 'nextagmedia.com',
+        'x-ntrack-client-ip': '198.51.100.77',
+        'x-ntrack-country': 'IN',
+        'x-ntrack-city': 'New%20Delhi',
+        ...headers,
+      },
+    });
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+  it('uses the visitor host, IP and country sent with the right secret', async () => {
+    const response = await forwarded({ 'x-ntrack-proxy-secret': SECRET });
+    expect(response.statusCode).toBe(302);
+    expect(response.headers.location).toMatch(/^https:\/\/brand\.com\/offer\?aff=[0-9A-Z]{26}&s1=ads$/);
+    await flush();
+    expect(store.events[0]).toMatchObject({ country: 'IN', ip: '198.51.100.0', city: 'New Delhi' });
+  });
+
+  it('ignores forwarded headers without the secret, so the visitor host is not trusted', async () => {
+    expect((await forwarded({})).statusCode).toBe(404);
+    expect((await forwarded({ 'x-ntrack-proxy-secret': 'b'.repeat(64) })).statusCode).toBe(404);
+  });
+
+  it('falls back to the connection IP when the forwarded IP is not an IP address', async () => {
+    const response = await forwarded({ 'x-ntrack-proxy-secret': SECRET, 'x-ntrack-client-ip': 'not-an-ip' });
+    expect(response.statusCode).toBe(302);
+    await flush();
+    expect(store.events[0]?.ip).not.toBe('not-an-ip');
   });
 });

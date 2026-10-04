@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { isClickId, type ConversionIntake } from '@ntrack/shared';
+import { visitorHost, type ProxyTrust } from '../services/request-facts';
 import type { TrackerStore } from '../services/tracker-store';
 import { CLICK_COOKIE } from './click';
 
@@ -74,7 +75,7 @@ const tokenMatches = (token: string, expectedHash: string | null) => {
 
 const reject = (reply: FastifyReply, status: number, reason: string) => reply.code(status).header('Cache-Control', 'no-store').send({ status: 'rejected', reason });
 
-export const registerConversionRoutes = (app: FastifyInstance, store: TrackerStore) => {
+export const registerConversionRoutes = (app: FastifyInstance, store: TrackerStore, trust: ProxyTrust = { trustProxy: false, proxySecret: '' }) => {
   app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string', bodyLimit: 16 * 1024 }, (_request, body, done) => {
     done(null, Object.fromEntries(new URLSearchParams(body as string)));
   });
@@ -121,7 +122,7 @@ export const registerConversionRoutes = (app: FastifyInstance, store: TrackerSto
   for (const path of ['/pixel', '/px']) app.get(path, { logLevel: 'warn' }, handlePixel);
 
   const handleScript = async (request: FastifyRequest, reply: FastifyReply) => {
-    const origin = `https://${request.hostname}`;
+    const origin = `https://${visitorHost(request, trust)}`;
     return reply.header('Content-Type', 'application/javascript; charset=utf-8').header('Cache-Control', 'public, max-age=3600').send(trackingScript(origin));
   };
   for (const path of ['/ntrack.js', '/js/ntrack.js']) app.get(path, handleScript);

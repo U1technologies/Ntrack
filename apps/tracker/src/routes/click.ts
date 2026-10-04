@@ -42,7 +42,7 @@ export const registerClickRoutes = (app: FastifyInstance, store: TrackerStore, c
     const { slug } = request.params;
     if (!SLUG_PATTERN.test(slug)) return sendError(reply, 404);
 
-    const facts = extractRequestFacts(request, config.trustProxy);
+    const facts = extractRequestFacts(request, config);
     const hostname = config.devHostOverride && !facts.host.includes('.') ? config.devHostOverride : facts.host;
 
     const [domain, link] = await store.getDomainAndLink(hostname, slug);

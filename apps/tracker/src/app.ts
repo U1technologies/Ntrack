@@ -34,7 +34,7 @@ export const buildTracker = (store: TrackerStore, config: TrackerConfig, deps: T
   app.get('/.well-known/ntrack', async () => ({ service: 'ntrack-tracker' }));
 
   registerClickRoutes(app, store, config, deps.datacenter ?? EMPTY_DATACENTER_MATCHER);
-  registerConversionRoutes(app, store);
+  registerConversionRoutes(app, store, config);
 
   app.setNotFoundHandler((_request, reply) => reply.code(404).type('text/html; charset=utf-8').send(errorPage(404)));
   app.setErrorHandler((error, request, reply) => {

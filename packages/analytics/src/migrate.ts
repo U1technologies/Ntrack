@@ -1,7 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { createClient } from '@clickhouse/client';
-import { createAnalyticsClient, type AnalyticsConfig } from './client';
+import { createAnalyticsClient, normalizeClickhouseUrl, type AnalyticsConfig } from './client';
 
 const DEFAULT_MIGRATIONS_DIR = fileURLToPath(new URL('../migrations', import.meta.url));
 
@@ -11,7 +11,7 @@ export const migrateAnalytics = async (
   log: (msg: string) => void = console.log,
   migrationsDir: string = process.env.ANALYTICS_MIGRATIONS_DIR ?? DEFAULT_MIGRATIONS_DIR
 ) => {
-  const bootstrap = createClient({ url: config.url, username: config.username, password: config.password });
+  const bootstrap = createClient({ url: normalizeClickhouseUrl(config.url), username: config.username, password: config.password });
   await bootstrap.command({ query: `CREATE DATABASE IF NOT EXISTS ${config.database.replace(/[^a-zA-Z0-9_]/g, '')}` });
   await bootstrap.close();
 

@@ -3,11 +3,19 @@ const required = (name: string, value: string | undefined): string => {
   return value;
 };
 
+const proxySecretFrom = (value: string | undefined): string => {
+  const secret = value?.trim() ?? '';
+  if (secret && secret.length < 32) throw new Error('TRACKER_PROXY_SECRET must be at least 32 characters');
+  return secret;
+};
+
 export interface TrackerConfig {
   port: number;
   redisUrl: string;
   hashSecret: string;
   trustProxy: boolean;
+  /** Shared with the website that forwards /click etc.; '' when the tracker is reached directly. */
+  proxySecret: string;
   devHostOverride: string;
   logLevel: string;
   /** JSON file produced by scripts/update-datacenter-ranges.mjs; '' looks in the default locations. */
@@ -23,6 +31,7 @@ export const loadTrackerConfig = (env: NodeJS.ProcessEnv = process.env): Tracker
     redisUrl: required('REDIS_URL', env.REDIS_URL),
     hashSecret: required('TRACKING_HASH_SECRET', env.TRACKING_HASH_SECRET),
     trustProxy: env.TRUST_PROXY === 'true',
+    proxySecret: proxySecretFrom(env.TRACKER_PROXY_SECRET),
     devHostOverride,
     logLevel: env.LOG_LEVEL ?? 'info',
     datacenterRangesFile: env.DATACENTER_RANGES_FILE ?? '',

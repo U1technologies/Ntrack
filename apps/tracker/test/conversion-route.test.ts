@@ -6,7 +6,7 @@ import { buildTracker } from '../src/app';
 import { MemoryTrackerStore } from '../src/services/tracker-store';
 import { ADVERTISER_ID, CAMPAIGN_ID, DOMAIN_ID, LINK_ID, ORG, PUBLISHER_ID } from './fixtures';
 
-const config = { port: 0, redisUrl: '', hashSecret: 'test-secret', trustProxy: false, devHostOverride: '', logLevel: 'silent', datacenterRangesFile: '' };
+const config = { port: 0, redisUrl: '', hashSecret: 'test-secret', trustProxy: false, proxySecret: '', devHostOverride: '', logLevel: 'silent', datacenterRangesFile: '' };
 const CLICK = '01J9Z3QK4T8W2M6N7P5R0S1V2X';
 const TOKEN = 'advertiser-secret-token';
 

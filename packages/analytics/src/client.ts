@@ -7,6 +7,9 @@ export interface AnalyticsConfig {
   password: string;
 }
 
+/** Accepts "host:port" (as Render's private network gives it) as well as a full http(s) URL. */
+export const normalizeClickhouseUrl = (url: string): string => (/^https?:\/\//i.test(url) ? url : `http://${url}`);
+
 export const analyticsConfigFromEnv = (env: NodeJS.ProcessEnv = process.env): AnalyticsConfig => ({
   url: env.CLICKHOUSE_URL ?? 'http://localhost:8123',
   database: env.CLICKHOUSE_DATABASE ?? 'ntrack',
@@ -16,7 +19,7 @@ export const analyticsConfigFromEnv = (env: NodeJS.ProcessEnv = process.env): An
 
 export const createAnalyticsClient = (config: AnalyticsConfig): ClickHouseClient =>
   createClient({
-    url: config.url,
+    url: normalizeClickhouseUrl(config.url),
     database: config.database,
     username: config.username,
     password: config.password,

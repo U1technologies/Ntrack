@@ -6,7 +6,9 @@ import { safeRequest } from './safe-http';
  * Tracking domain ownership verification and health checks.
  *
  * Ownership: the customer publishes TXT `_ntrack-challenge.<hostname>` = `ntrack-verify=<token>`.
- * Routing:   <hostname> must CNAME to the tracker target (or resolve to the same addresses).
+ * Routing:   <hostname> must CNAME to the tracker target (or resolve to the same addresses), or
+ *            answer https://<hostname>/.well-known/ntrack from the tracker. The last case covers
+ *            a website that forwards its tracking paths to NTrack (nextagmedia.com/click on Vercel).
  * Health:    HTTPS GET https://<hostname>/.well-known/ntrack must answer from the tracker.
  */
 
@@ -29,6 +31,18 @@ const safeResolve = async <T>(fn: () => Promise<T>, fallback: T): Promise<T> => 
   }
 };
 
+const isTrackerAnswer = (status: number, body: string) => status === 200 && body.includes('ntrack-tracker');
+
+/** True when https://<host>/.well-known/ntrack is answered by the tracker (directly or forwarded). */
+const answersFromTracker = async (host: string): Promise<boolean> => {
+  try {
+    const response = await safeRequest(`https://${host}/.well-known/ntrack`, { timeoutMs: 8000 });
+    return isTrackerAnswer(response.status, response.body);
+  } catch {
+    return false;
+  }
+};
+
 export const verifyDomain = async (hostname: string, token: string, cnameTarget: string): Promise<DomainVerificationResult> => {
   const host = normalizeHostname(hostname);
   const target = normalizeHostname(cnameTarget);
@@ -44,6 +58,7 @@ export const verifyDomain = async (hostname: string, token: string, cnameTarget:
     ]);
     routingVerified = hostIps.length > 0 && hostIps.every((ip) => targetIps.includes(ip));
   }
+  if (!routingVerified) routingVerified = await answersFromTracker(host);
 
   return {
     ownershipVerified: txtRecords.includes(challengeRecordValue(token)),
@@ -72,7 +87,7 @@ export const checkDomainHealth = async (hostname: string, timeoutMs = 8000): Pro
   }
   try {
     const response = await safeRequest(`https://${host}/.well-known/ntrack`, { timeoutMs });
-    const servedByTracker = response.status === 200 && response.body.includes('ntrack-tracker');
+    const servedByTracker = isTrackerAnswer(response.status, response.body);
     return {
       dnsOk,
       httpsOk: servedByTracker,

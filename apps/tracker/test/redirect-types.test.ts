@@ -6,7 +6,7 @@ import { buildHtmlRedirect } from '../src/services/html-redirect';
 import { MemoryTrackerStore } from '../src/services/tracker-store';
 import { makeCampaign, makeDomain, makeLink } from './fixtures';
 
-const config = { port: 0, redisUrl: '', hashSecret: 'test-secret', trustProxy: true, devHostOverride: '', logLevel: 'silent', datacenterRangesFile: '' };
+const config = { port: 0, redisUrl: '', hashSecret: 'test-secret', trustProxy: true, proxySecret: '', devHostOverride: '', logLevel: 'silent', datacenterRangesFile: '' };
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 Chrome/128 Safari/537.36';
 
 describe('redirect response types', () => {
