@@ -6,7 +6,7 @@ import { paginated } from '../../lib/response';
 import { serialize } from '../../lib/serialize';
 import { assertAdvertiserAccess, campaignWhere, isAdvertiserPortal, isPublisherPortal } from '../../services/access-scope';
 import { writeAudit } from '../../services/audit';
-import { nextSerialNumber } from '../../services/serial-number';
+import { nextSerialNumber, serialSearch } from '../../services/serial-number';
 import { TOKEN_PLACEHOLDER, TRACKING_METHOD_NOTES, TRACKING_SETUP_NOTES, buildTrackingSnippets, canRevealPostbackToken } from '../../services/tracking-snippets';
 import { validateLandingPageTemplate } from '../../services/destination-validation';
 import type { AppDeps, OrgAuthContext, RequestMeta } from '../../types';
@@ -79,7 +79,7 @@ export class CampaignsService {
       ...(query.advertiserId ? { advertiserId: query.advertiserId } : {}),
       ...(query.category ? { category: query.category } : {}),
       ...(query.search
-        ? { OR: [{ name: { contains: query.search, mode: 'insensitive' } }, { publicId: query.search }, { advertiser: { companyName: { contains: query.search, mode: 'insensitive' } } }] }
+        ? { OR: [{ name: { contains: query.search, mode: 'insensitive' } }, { publicId: query.search }, ...serialSearch(query.search), { advertiser: { companyName: { contains: query.search, mode: 'insensitive' } } }] }
         : {}),
     };
     const [items, total] = await Promise.all([

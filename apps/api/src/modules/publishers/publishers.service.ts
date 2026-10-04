@@ -5,7 +5,7 @@ import { AppError } from '../../lib/errors';
 import { paginated } from '../../lib/response';
 import { publisherWhere } from '../../services/access-scope';
 import { writeAudit } from '../../services/audit';
-import { nextSerialNumber } from '../../services/serial-number';
+import { nextSerialNumber, serialSearch } from '../../services/serial-number';
 import type { AppDeps, OrgAuthContext, RequestMeta } from '../../types';
 import type { ListPublishersQuery, PaymentDetails, PublisherBody, PublisherDecisionBody, TaxInfo, UpdatePublisherBody } from './publishers.schemas';
 
@@ -46,6 +46,7 @@ export class PublishersService {
               { companyName: { contains: query.search, mode: 'insensitive' } },
               { email: { contains: query.search, mode: 'insensitive' } },
               { publicId: query.search },
+              ...serialSearch(query.search),
             ],
           }
         : {}),

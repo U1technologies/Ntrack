@@ -7,7 +7,7 @@ import { paginated } from '../../lib/response';
 import { advertiserWhere } from '../../services/access-scope';
 import { TOKEN_PLACEHOLDER, TRACKING_SETUP_NOTES, buildTrackingSnippets, canRevealPostbackToken } from '../../services/tracking-snippets';
 import { writeAudit } from '../../services/audit';
-import { nextSerialNumber } from '../../services/serial-number';
+import { nextSerialNumber, serialSearch } from '../../services/serial-number';
 import type { AppDeps, OrgAuthContext, RequestMeta } from '../../types';
 import type { AdvertiserBody, ListAdvertisersQuery, UpdateAdvertiserBody } from './advertisers.schemas';
 
@@ -31,6 +31,7 @@ export class AdvertisersService {
               { companyName: { contains: query.search, mode: 'insensitive' } },
               { email: { contains: query.search, mode: 'insensitive' } },
               { publicId: query.search },
+              ...serialSearch(query.search),
             ],
           }
         : {}),
