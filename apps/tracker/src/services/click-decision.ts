@@ -138,8 +138,13 @@ export const decideClick = (campaign: CampaignSnapshot, link: LinkSnapshot, fact
 
   // force_transparent=true (the market convention, also named in Google's click tracker guidelines)
   // makes any campaign follow the transparency parameter, still limited to the campaign's allowed hosts.
-  const forcedTransparent = q.force_transparent === 'true' && Boolean(q[campaign.destinationParam]);
-  if (campaign.redirectMode === 'transparent' || forcedTransparent) {
+  // A missing destination, or an ad platform placeholder that was never filled in (e.g. "{lpurl}"
+  // when the template is opened directly), falls back to the campaign's own landing page instead of
+  // an error page, as other trackers do. A real destination is always followed; foreign hosts are refused.
+  const declared = (q[campaign.destinationParam] ?? '').trim();
+  const hasDestination = declared !== '' && !/^\{[^}]*\}$/.test(declared);
+  const forcedTransparent = q.force_transparent === 'true' && hasDestination;
+  if ((campaign.redirectMode === 'transparent' && hasDestination) || forcedTransparent) {
     return decideTransparent(campaign, facts, { subs, externalClickId, blockReason, trafficReason });
   }
 

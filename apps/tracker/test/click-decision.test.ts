@@ -112,9 +112,17 @@ describe('decideClick: transparent mode (Google Ads compatible)', () => {
     expect(decision).toMatchObject({ kind: 'redirect', location: declared });
   });
 
-  it('never falls back to another destination when the declared one is missing or off-list', () => {
-    expect(decideClick(transparent, makeLink(), facts())).toMatchObject({ kind: 'reject', status: 400, code: 'destination_missing' });
+  it('refuses a declared destination on a host the campaign does not allow (no silent substitution)', () => {
     expect(decideClick(transparent, makeLink(), facts({ query: { url: 'https://evil.com' } }))).toMatchObject({ kind: 'reject', status: 400 });
+  });
+
+  it('falls back to the campaign landing page when the destination is missing or an unfilled placeholder like {lpurl}', () => {
+    for (const query of [{}, { url: "{lpurl}" }, { url: " " }] as Array<Record<string, string>>) {
+      const decision = decideClick(transparent, makeLink(), facts({ query }));
+      expect(decision).toMatchObject({ kind: 'redirect', landingPageId: 'lp_main' });
+      expect(decision.kind === 'redirect' && decision.location).toMatch(/^https:\/\/brand\.com\/offer\?aff=/);
+      expect(decision.kind === 'redirect' && decision.transparent).toBeFalsy();
+    }
   });
 
   it('still sends the user to the declared URL for a paused campaign, recording the click as invalid', () => {
