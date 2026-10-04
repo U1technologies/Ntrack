@@ -52,9 +52,10 @@ export const UpdateSettingsBody = z
         externalClickId: paramName,
         landingPage: paramName,
         deepLink: paramName,
-        gaid: paramName,
-        idfa: paramName,
-        appName: paramName,
+        // Added later: settings saved before mobile tokens existed keep working.
+        gaid: paramName.default('gaid'),
+        idfa: paramName.default('idfa'),
+        appName: paramName.default('app_name'),
       })
       .refine((map) => new Set(Object.values(map)).size === Object.values(map).length, 'Parameter names must be unique'),
   })
