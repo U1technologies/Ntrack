@@ -31,6 +31,17 @@ const main = async () => {
         data: { email, name: process.env.SEED_ADMIN_NAME ?? 'NTrack Admin', passwordHash: await hashPassword(password), isPlatformAdmin: true },
       });
       console.log(`Created platform super admin ${email}`);
+    } else if (process.env.SEED_ADMIN_RESET_PASSWORD === 'true') {
+      // Recovery when the first admin cannot sign in (e.g. email not configured yet). Set the flag,
+      // deploy once, then remove it so later deploys never touch the password again.
+      await prisma.user.update({
+        where: { id: existing.id },
+        data: { passwordHash: await hashPassword(password), status: 'active', isPlatformAdmin: true, failedLoginCount: 0, lockedUntil: null },
+      });
+      await prisma.session.deleteMany({ where: { userId: existing.id } }).catch(() => undefined);
+      console.log(`Reset the password of platform super admin ${email} (remove SEED_ADMIN_RESET_PASSWORD now)`);
+    } else {
+      console.log(`Platform super admin ${email} already exists; password unchanged`);
     }
   } else {
     console.log('SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD not set; skipping super admin creation.');
